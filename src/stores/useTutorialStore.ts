@@ -42,6 +42,7 @@ interface GraphSnapshot {
   historyFuture: ReturnType<typeof useFlowStore.getState>['historyFuture'];
   canUndo: boolean;
   canRedo: boolean;
+  gameLayout: ReturnType<typeof useFlowStore.getState>['gameLayout'];
 }
 
 interface UISnapshot {
@@ -139,6 +140,7 @@ function captureGraphSnapshot(): GraphSnapshot {
     historyFuture: clone(flow.historyFuture),
     canUndo: flow.canUndo,
     canRedo: flow.canRedo,
+    gameLayout: flow.gameLayout,
   };
 }
 
@@ -204,6 +206,7 @@ function restoreGraphSnapshot(snapshot: GraphSnapshot): void {
     recordHistory: false,
     resetHistory: true,
   });
+  flow.setGameLayout(snapshot.gameLayout, { recordHistory: false });
   useFlowStore.setState({
     historyPast: clone(snapshot.historyPast),
     historyFuture: clone(snapshot.historyFuture),
@@ -492,6 +495,7 @@ function applyInitialCanvas(
   definition: TutorialDefinition,
 ): Partial<Record<TutorialAlias, string>> {
   const flow = useFlowStore.getState();
+  flow.setGameLayout(null, { recordHistory: false });
   if (definition.initialCanvas.type === 'empty') {
     flow.setNodesAndEdges([], [], { recordHistory: false, resetHistory: true });
     return {};

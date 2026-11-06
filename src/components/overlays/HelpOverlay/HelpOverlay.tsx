@@ -10,6 +10,7 @@ import {
   Info,
   LayoutDashboard,
   MousePointerSquareDashed,
+  Factory,
   Network,
   PackageSearch,
   Palette,
@@ -32,6 +33,7 @@ import changelogData from './changelog.json';
 
 const ICON_MAP: Record<string, ComponentType<{ size?: number; className?: string }>> = {
   MousePointerSquareDashed,
+  Factory,
   Zap,
   Settings,
   Save,

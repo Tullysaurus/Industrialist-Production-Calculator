@@ -23,6 +23,22 @@ export const CATEGORIZED_TIPS: TipCategory[] = [
     ],
   },
   {
+    id: 'tips-ingame',
+    title: 'In-game layout',
+    summary: 'Lay the factory out tile by tile, by hand or with the generator.',
+    icon: 'Factory',
+    tips: [
+      'Switch between Flowchart and In-game layout with the tabs at the top. The in-game layout is saved with the save file.',
+      'Every machine of the flowchart appears under Unplaced. Click one, move the mouse onto the grid and click to place it; R rotates and Shift+click keeps placing the same machine.',
+      'Pipe tool (W): drag from a port to paint a pipe tile by tile, or click a port and then click where the pipe should go to let the router find a legal path.',
+      'Auto-route connects everything between placed machines that is not routed yet; Re-route redoes the selected pipes or the pipes of the selected machines.',
+      'Pin machines and pipes (P) to keep them: Generate lays out everything else around the pinned part.',
+      'A normal pipe crosses a large pipe only through a passthrough, two large pipes cross through an intersection. Drawing across a large pipe adds the passthrough when it fits.',
+      'Valves (Q) lie on a pipe: in at one end, straight out at the other, side out of the middle. Set the side share in the inspector, or use the planned share.',
+      'Problems lists everything that breaks a game rule or the plan; click an entry to jump to it. When the flowchart changes, new machines show up as Unplaced and removed ones are marked in red.',
+    ],
+  },
+  {
     id: 'tips-solver',
     title: 'Flow and optimization',
     summary: 'Understand shortages, targets, and the optimizer results.',

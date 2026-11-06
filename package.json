@@ -14,6 +14,7 @@
     "test:graph": "node --test --test-concurrency=1 tools/flow-store-history.test.mjs",
     "test:canvas": "node --test --test-concurrency=1 tools/pixi-canvas-adapter.test.mjs tools/canvas-renderer-preference.test.mjs",
     "test:layout": "node --test --test-concurrency=1 tools/layout-groups.test.mjs",
+    "test:game-layout": "node --test --test-concurrency=1 tools/game-layout.test.mjs",
     "test:calculation": "node --test tools/calculation-validation.test.mjs && node --test tools/production-flow.test.mjs",
     "check:design-rules": "node tools/check-design-rules.mjs",
     "preview": "vite preview"

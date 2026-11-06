@@ -1,5 +1,25 @@
 [
   {
+    "minor": 10,
+    "minorName": "In-game layout",
+    "patches": [
+      {
+        "hash": "pending",
+        "version": "v0.10.0",
+        "patch": 0,
+        "date": "2026-11-07",
+        "subject": "feat: add the in-game layout editor and generator",
+        "items": [
+          "Added an In-game layout view next to the Flowchart: place machines on the tile grid, draw pipes and conveyors, and add valves, large pipe passthroughs and intersections by hand.",
+          "Added a layout generator that packs the machines into a small footprint and routes every pipe, keeping pinned machines and pipes where they are. It runs in the background and can be stopped at any time with the best layout so far.",
+          "Added routing tools: click-to-click pipes with automatic paths, auto-route for everything not routed yet, and re-route for selected pipes or machines.",
+          "Layouts are checked against the game's rules and the plan, including an even-split check of every pipe split, with a Problems list that jumps to each issue.",
+          "In-game layouts are stored in saves (save format version 5) and share undo and redo with the flowchart."
+        ]
+      }
+    ]
+  },
+  {
     "minor": 9,
     "minorName": "PixiJS canvas and renderer choice",
     "patches": [

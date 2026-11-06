@@ -1,3 +1,4 @@
+import type { GameLayoutDoc } from '../gameLayout/docSchema';
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import {
@@ -76,6 +77,18 @@ interface FlowState {
 
   historyPast: HistoryEntry<CanvasNode, Edge>[];
   historyFuture: HistoryEntry<CanvasNode, Edge>[];
+  /** In-game layout document (null until something is placed). Saved with the save file. */
+  gameLayout: GameLayoutDoc | null;
+  /** Bumped on every in-game layout change (including undo / redo). */
+  gameLayoutVersion: number;
+  /**
+   * Replace the in-game layout. Records one undo step unless recordHistory is false; `before`
+   * overrides the snapshot to undo to (for edits applied live during a drag).
+   */
+  setGameLayout: (
+    doc: GameLayoutDoc | null,
+    options?: { recordHistory?: boolean; before?: GameLayoutDoc | null },
+  ) => void;
   canUndo: boolean;
   canRedo: boolean;
   undo: () => void;
@@ -1061,6 +1074,16 @@ const useFlowStore = create(
       solutionVersion: 0,
       historyPast: [],
       historyFuture: [],
+      gameLayout: null,
+      gameLayoutVersion: 0,
+      setGameLayout: (doc, options) => {
+        const prev = get().gameLayout;
+        const before = options && 'before' in options ? (options.before ?? null) : prev;
+        set((state) => ({ gameLayout: doc, gameLayoutVersion: state.gameLayoutVersion + 1 }));
+        if (options?.recordHistory !== false && !isApplyingHistory && before !== doc) {
+          pushHistoryEntry({ kind: 'gameLayout', before, after: doc });
+        }
+      },
       canUndo: false,
       canRedo: false,
       markSolutionCommitted: () => {
@@ -1077,6 +1100,17 @@ const useFlowStore = create(
 
             const nextPast = state.historyPast.slice(0, -1);
             const nextFuture = [...state.historyFuture, entry];
+
+            if (entry.kind === 'gameLayout') {
+              return {
+                gameLayout: entry.before,
+                gameLayoutVersion: state.gameLayoutVersion + 1,
+                historyPast: nextPast,
+                historyFuture: nextFuture,
+                canUndo: nextPast.length > 0,
+                canRedo: nextFuture.length > 0,
+              };
+            }
 
             if (entry.kind === 'position') {
               const applied = applyPositionHistoryEntry(entry, 'undo', state.nodes, state.edges);
@@ -1127,6 +1161,17 @@ const useFlowStore = create(
             const trimmedPast =
               overflow > 0 ? state.historyPast.slice(overflow) : state.historyPast;
             const nextPast = [...trimmedPast, entry];
+
+            if (entry.kind === 'gameLayout') {
+              return {
+                gameLayout: entry.after,
+                gameLayoutVersion: state.gameLayoutVersion + 1,
+                historyPast: nextPast,
+                historyFuture: nextFuture,
+                canUndo: nextPast.length > 0,
+                canRedo: nextFuture.length > 0,
+              };
+            }
 
             if (entry.kind === 'position') {
               const applied = applyPositionHistoryEntry(entry, 'redo', state.nodes, state.edges);

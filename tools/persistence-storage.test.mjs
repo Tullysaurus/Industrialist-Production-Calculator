@@ -623,7 +623,7 @@ for (const [action, title] of [
     await store.getState()[action](record);
 
     assert.equal(shownConfirmation.title, title);
-    assert.match(shownConfirmation.message, /newer than this app supports \(version 4\)/);
+    assert.match(shownConfirmation.message, /newer than this app supports \(version 5\)/);
     assert.deepEqual(
       flowStoreModule.useFlowStore.getState().nodes.map((node) => node.id),
       ['existing-node'],
@@ -638,7 +638,7 @@ for (const [action, title] of [
 }
 
 for (const [version, explanation] of [
-  [999, /newer than this app supports \(version 4\)/],
+  [999, /newer than this app supports \(version 5\)/],
   [0, /no explicit migration exists/],
   [-1, /no explicit migration exists/],
 ]) {

@@ -1,4 +1,5 @@
 import type { Edge } from '@xyflow/react';
+import type { GameLayoutDoc } from '../gameLayout/docSchema';
 import { isGroupNode, isRecipeNode } from '../types/nodes';
 import type { CanvasNode } from '../types/nodes';
 import type { EdgeControlPoint } from '../types/edges';
@@ -19,7 +20,7 @@ import {
   type RecipePortCounts,
 } from './saveMigrations';
 
-export const CURRENT_SAVE_VERSION = 4;
+export const CURRENT_SAVE_VERSION = 5;
 
 function sanitizeSavedPoints(raw: unknown): EdgeControlPoint[] | undefined {
   if (raw === undefined) return undefined;
@@ -169,6 +170,7 @@ export function serializeCanvas(
   nodes: CanvasNode[],
   edges: Edge[],
   allOverrides?: { id: string; data: Record<string, unknown> }[],
+  gameLayout?: GameLayoutDoc | null,
 ): SaveData {
   const savedNodes: SavedNode[] = [];
   for (let i = 0; i < nodes.length; i++) {
@@ -250,6 +252,7 @@ export function serializeCanvas(
       edges: savedEdges,
       globalSettings,
       dataOverrides: allOverrides && allOverrides.length > 0 ? allOverrides : undefined,
+      gameLayout: gameLayout ?? undefined,
     },
     allOverrides,
   );
@@ -262,6 +265,7 @@ export function deserializeCanvas(
   nodes: CanvasNode[];
   edges: Edge[];
   globalSettings?: GlobalSettings;
+  gameLayout: GameLayoutDoc | null;
 } {
   const migrated = migrateSaveData(saveData, recipeOverridesForValidation);
   const nodes: CanvasNode[] = migrated.nodes.map((savedNode) => {
@@ -324,7 +328,12 @@ export function deserializeCanvas(
     };
   });
 
-  return { nodes, edges, globalSettings: migrated.globalSettings };
+  return {
+    nodes,
+    edges,
+    globalSettings: migrated.globalSettings,
+    gameLayout: migrated.gameLayout ?? null,
+  };
 }
 
 export function applySaveSettings(settings: GlobalSettings | undefined): void {

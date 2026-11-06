@@ -24,10 +24,20 @@ const { outputText: transpiledMigration } = ts.transpileModule(source, {
     target: ts.ScriptTarget.ES2022,
   },
 });
-const outputText = transpiledMigration.replace(
-  "from '../types/globalSettings'",
-  `from '${globalSettingsModuleUrl}'`,
+const docSchemaSource = await readFile(
+  new URL('../src/gameLayout/docSchema.ts', import.meta.url),
+  'utf8',
 );
+const { outputText: docSchemaOutput } = ts.transpileModule(docSchemaSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.ESNext,
+    target: ts.ScriptTarget.ES2022,
+  },
+});
+const docSchemaModuleUrl = `data:text/javascript;base64,${Buffer.from(docSchemaOutput).toString('base64')}`;
+const outputText = transpiledMigration
+  .replace("from '../types/globalSettings'", `from '${globalSettingsModuleUrl}'`)
+  .replace("from '../gameLayout/docSchema'", `from '${docSchemaModuleUrl}'`);
 const migrationModuleUrl = `data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`;
 const { migrateSaveData, SaveMigrationError } = await import(migrationModuleUrl);
 const viteServer = await createServer({
@@ -184,6 +194,65 @@ test('migrates v3 saves without a month to v4 with a January default', () => {
   assert.equal(migrated.version, 4);
   assert.equal(migrated.globalSettings?.current_month, 'January');
   assert.equal(JSON.stringify(source), original);
+});
+
+function sampleGameLayout() {
+  return {
+    version: 1,
+    machines: [{ key: 'n1#0', x: 3, y: -4, rot: 1, pinned: true, name: 'Drill', w: 4, h: 4 }],
+    pipes: [
+      {
+        net: 'p_coal|n1:o0+n2:i0|0',
+        large: false,
+        nodes: [0, 0, 1, 0],
+        edges: [0, 0, 1, 0, 0],
+        label: 'Coal',
+      },
+    ],
+    valves: [{ id: 'v1', x: 5, y: 5, rot: 2, sidePct: 25 }],
+    passthroughs: [{ id: 'p1', x: 10, y: 10, horizontal: true, kind: 'Item' }],
+    intersections: [{ id: 'i1', x: 20, y: 20 }],
+  };
+}
+
+test('migrates v4 saves to v5 without inventing an in-game layout', () => {
+  const migrated = migrateSaveData(version4Save(), 5, resolveRecipePorts);
+
+  assert.equal(migrated.version, 5);
+  assert.equal(migrated.gameLayout, undefined);
+});
+
+test('validates and round-trips the in-game layout of v5 saves', () => {
+  const save = { ...version4Save(), version: 5, gameLayout: sampleGameLayout() };
+  const migrated = migrateSaveData(save, 5, resolveRecipePorts);
+  const reloaded = migrateSaveData(JSON.parse(JSON.stringify(migrated)), 5, resolveRecipePorts);
+
+  assert.deepEqual(migrated.gameLayout, sampleGameLayout());
+  assert.deepEqual(reloaded, migrated);
+});
+
+test('rejects an in-game layout on saves older than v5', () => {
+  const save = { ...version4Save(), gameLayout: sampleGameLayout() };
+
+  assert.throws(
+    () => migrateSaveData(save, 5, resolveRecipePorts),
+    /only supported from save version 5/,
+  );
+});
+
+test('rejects malformed in-game layout data with the offending path', () => {
+  const layout = sampleGameLayout();
+  layout.pipes[0].edges = [0, 0, 1, 0];
+  const save = { ...version4Save(), version: 5, gameLayout: layout };
+
+  assert.throws(() => migrateSaveData(save, 5, resolveRecipePorts), /pipes\[0\]\.edges/);
+
+  const badValve = sampleGameLayout();
+  badValve.valves[0].sidePct = 150;
+  assert.throws(
+    () => migrateSaveData({ ...save, gameLayout: badValve }, 5, resolveRecipePorts),
+    /sidePct/,
+  );
 });
 
 test('preserves a valid month on v3 saves written by the previous app format', () => {
@@ -501,7 +570,7 @@ test('sandbox imports ignore redundant research IDs', () => {
 });
 
 test('failed deserialization leaves the named record, autosave payload, and global settings untouched', () => {
-  const futureData = { ...version4Save(), version: 5 };
+  const futureData = { ...version4Save(), version: 6 };
   const namedRecord = { id: 'named-save', data: futureData };
   const autosaveRecord = { id: 'tab:autosave', data: futureData };
   const namedBefore = JSON.stringify(namedRecord);

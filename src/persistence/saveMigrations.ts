@@ -6,6 +6,7 @@ import type {
   SavedRecipeNode,
 } from '../types/saves';
 import { isGameDifficulty } from '../types/globalSettings';
+import { normalizeLayoutDoc } from '../gameLayout/docSchema';
 
 export class SaveMigrationError extends Error {
   constructor(message: string) {
@@ -40,7 +41,7 @@ const MONTHS = new Set([
   'December',
 ]);
 
-const ROOT_KEYS = ['version', 'nodes', 'edges', 'globalSettings', 'dataOverrides'];
+const ROOT_KEYS = ['version', 'nodes', 'edges', 'globalSettings', 'dataOverrides', 'gameLayout'];
 const RECIPE_NODE_KEYS_V2 = [
   'id',
   'type',
@@ -282,6 +283,11 @@ function migrateV3ToV4(data: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
+/** Version 5 adds the optional in-game layout; older saves have none. */
+function migrateV4ToV5(data: Record<string, unknown>): Record<string, unknown> {
+  return { ...data, version: 5 };
+}
+
 function parseHandleId(
   value: string,
 ): { nodeId: string; side: 'input' | 'output'; index: number } | null {
@@ -422,6 +428,9 @@ function normalizeEdge(rawEdge: unknown, index: number): SavedEdge {
 }
 
 function validateVersionedFields(data: Record<string, unknown>, version: number): void {
+  if (version < 5 && data.gameLayout !== undefined) {
+    fail('gameLayout', `is only supported from save version 5 (this save is version ${version})`);
+  }
   if (!Array.isArray(data.nodes)) fail('nodes', 'must be an array');
   if (!Array.isArray(data.edges)) fail('edges', 'must be an array');
 
@@ -573,6 +582,10 @@ export function migrateSaveData(
     data = migrateV3ToV4(data);
     version = 4;
   }
+  if (version === 4 && version < currentVersion) {
+    data = migrateV4ToV5(data);
+    version = 5;
+  }
   if (version !== currentVersion) {
     fail('version', `is ${sourceVersion}; no migration path to version ${currentVersion} exists`);
   }
@@ -589,6 +602,14 @@ export function migrateSaveData(
   const nodes = data.nodes.map((node, index) => normalizeNode(node, index, version));
   const edges = data.edges.map(normalizeEdge);
   validateReferences(nodes, edges, globalSettings, overridesForValidation, resolveRecipePorts);
+  let gameLayout: SaveData['gameLayout'];
+  if (data.gameLayout !== undefined) {
+    try {
+      gameLayout = normalizeLayoutDoc(data.gameLayout);
+    } catch (err) {
+      fail('gameLayout', err instanceof Error ? err.message : String(err));
+    }
+  }
 
   return {
     version: currentVersion,
@@ -596,5 +617,6 @@ export function migrateSaveData(
     edges,
     ...(globalSettings === undefined ? {} : { globalSettings }),
     ...(dataOverrides === undefined ? {} : { dataOverrides }),
+    ...(gameLayout === undefined ? {} : { gameLayout }),
   };
 }

@@ -22,6 +22,9 @@ tools/*
 !tools/pixi-canvas-adapter.test.mjs
 !tools/canvas-renderer-preference.test.mjs
 !tools/layout-groups.test.mjs
+!tools/game-layout.test.mjs
+!tools/game-layout-input.mjs
+!tools/game-layout-bench.mjs
 !tools/design-rules-baseline.json
 # Local precision and solver diagnostics; retain on disk without committing.
 tools/autocomplete-precision-test.mjs
@@ -60,3 +63,4 @@ tools/scip-wasm/smoke-tests/*
 # Temp & TS build cache
 .tmp/
 *.tsbuildinfo
+.scratch/

@@ -6,6 +6,10 @@ recipes, connect inputs and outputs, and inspect production rates, temperatures,
 shortages, and excesses. The app also includes machine-count optimization,
 recipe autocomplete, editable game data, and local layout saves.
 
+Next to the flowchart there is an **In-game layout** view: place the machines of the plan on
+the game's tile grid by hand, draw pipes and conveyors, add valves, large pipe passthroughs and
+intersections, or let the generator pack and route everything (keeping anything you pinned).
+
 **Live app:** [industrialist-calculator.pages.dev](https://industrialist-calculator.pages.dev/)
 
 ## Stack
@@ -39,6 +43,34 @@ The native bundle uses a shared precision policy for solver tolerances and
 whole-machine rounding. For the native model, payload, rebuild process, and
 smoke suite, see [`tools/scip-wasm/README.md`](tools/scip-wasm/README.md).
 
+## In-game layout
+
+The tabs at the top switch between the **Flowchart** and the **In-game layout**. The layout is a
+document stored in the save (save format v5): machines are keyed by their flowchart node and
+instance, pipes by the flowchart connection they carry, so the layout is matched up again when
+the flowchart changes (new machines appear as unplaced, removed ones are flagged).
+
+- **By hand**: place machines from the Unplaced list, move / rotate / pin / delete them, paint
+  pipes tile by tile or click port to port for an automatic path, erase tiles, and place valves,
+  passthroughs and intersections. Undo and redo are shared with the flowchart.
+- **Routing tools**: auto-route everything between placed machines that is not routed yet, or
+  re-route selected pipes / the pipes of selected machines around everything else.
+- **Generator**: packs all machines into a small footprint (simulated annealing over a
+  sequence-pair floorplan of machine blocks and modules) and routes every pipe with a negotiated
+  congestion A\* router (large pipes first, then normal pipes around and through them). Pinned
+  machines and pipes form a fixed block the rest is laid out around. It runs in a Web Worker,
+  shows its best layout while it works and can be stopped at any time.
+- **Rules checked** (Problems list): overlaps, pipes under machines, unconnected ports, at most
+  two normal pipes per tile, large pipes only crossing at a 2x2 intersection, normal pipes only
+  crossing large pipes through a 4x2 passthrough on a straight run, quantum hops only over
+  normal pipes, valve placement, the mineshaft drill spacing rule, and an even-split simulation
+  of every pipe split (valves at their set percentages).
+
+Rates come from the website's own flow pipeline, so the layout always uses the same numbers as
+the flowchart. Assumed geometry that is not in the game data: the 3x1 valve control, the 8x8
+pipe adapter (large port centred on top, eight small ports in a flattened U) and the 4x2
+passthrough.
+
 ## Run locally
 
 Install the dependencies and start Vite from the repository root:
@@ -59,6 +91,14 @@ npm run lint         # ESLint checks for src/
 npm run format       # Format source files under src/
 npm run format:check # Check source and tooling formatting
 npm run check:design-rules # Check CSS and TSX design rules
+npm run test:game-layout   # In-game layout editor and generator tests
+```
+
+Layout generator tools (development):
+
+```sh
+node tools/game-layout-input.mjs save.json input.json   # solve a save and write the engine input
+node tools/game-layout-bench.mjs input.json 60          # run the generator headlessly
 ```
 
 The checked-in WebAssembly bundle is sufficient for local app development.
@@ -73,6 +113,8 @@ Docker is required only to rebuild the native solver; follow the instructions in
 | `src/components/overlays/` | Recipe selector, optimizer, Data Manager, saves, themes, machines, and Help       |
 | `src/data/`                | Built-in recipes, machines, products, research, lookups, and special recipe rules |
 | `src/solver/`              | Flow and temperature pipeline, balancing, autocomplete, and ratio optimization    |
+| `src/gameLayout/`          | In-game layout document, editing operations, routing tools, and the generator     |
+| `src/components/gameLayout/` | In-game layout editor: tile canvas, tools tray, sidebar, inspector              |
 | `src/stores/`              | Zustand stores for canvas, solver results, settings, and overlays                 |
 | `src/persistence/`         | IndexedDB access, autosave, save transformation, and graph merging                |
 | `src/tutorials/`           | Guided tutorial steps and tutorial graph definitions                              |

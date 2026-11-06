@@ -292,7 +292,7 @@ export function createSavesOverlayStore() {
           let data: SaveData;
           try {
             const overrides = await getDataOverrides();
-            data = serializeCanvas(nodes, edges, overrides);
+            data = serializeCanvas(nodes, edges, overrides, useFlowStore.getState().gameLayout);
           } catch (error) {
             setStatusWithTimeout({
               type: 'error',
@@ -331,7 +331,7 @@ export function createSavesOverlayStore() {
             const customDataPlan = await prepareSaveCustomData(record);
             if (!customDataPlan.proceed) return;
 
-            const { nodes, edges, globalSettings } = deserializeCanvas(
+            const { nodes, edges, globalSettings, gameLayout } = deserializeCanvas(
               record.data,
               customDataPlan.overridesToLoad,
             );
@@ -346,6 +346,7 @@ export function createSavesOverlayStore() {
             await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
             applySaveSettings(globalSettings);
             useFlowStore.getState().setNodesAndEdges(nodes, edges);
+            useFlowStore.getState().setGameLayout(gameLayout);
             useUIStore.getState().setSavesOverlayOpen(false);
             useUIStore.getState().requestFitView();
           } catch (error) {
@@ -436,7 +437,7 @@ export function createSavesOverlayStore() {
           let data: SaveData;
           try {
             const overrides = await getDataOverrides();
-            data = serializeCanvas(nodes, edges, overrides);
+            data = serializeCanvas(nodes, edges, overrides, useFlowStore.getState().gameLayout);
           } catch (error) {
             setStatusWithTimeout({
               type: 'error',

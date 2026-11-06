@@ -1,4 +1,5 @@
 import type { Edge, Node } from '@xyflow/react';
+import type { GameLayoutDoc } from '../gameLayout/docSchema';
 
 export interface PositionSnapshot {
   x: number;
@@ -45,9 +46,17 @@ export interface PositionHistoryEntry<EdgeType extends Edge = Edge> {
   edgeRoutes: PositionEdgeRouteDiff<EdgeType>[];
 }
 
+/** An edit of the in-game layout document (whole-document snapshots; documents are immutable). */
+export interface GameLayoutHistoryEntry {
+  kind: 'gameLayout';
+  before: GameLayoutDoc | null;
+  after: GameLayoutDoc | null;
+}
+
 export type HistoryEntry<NodeType extends Node = Node, EdgeType extends Edge = Edge> =
   | GraphHistoryEntry<NodeType, EdgeType>
-  | PositionHistoryEntry<EdgeType>;
+  | PositionHistoryEntry<EdgeType>
+  | GameLayoutHistoryEntry;
 
 function createMapById<EntityType extends { id: string }>(
   entities: readonly EntityType[],

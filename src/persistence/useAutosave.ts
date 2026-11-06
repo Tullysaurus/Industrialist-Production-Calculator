@@ -134,6 +134,7 @@ export function useAutosave(): void {
               recordHistory: false,
               resetHistory: true,
             });
+            currentStore.setGameLayout(canvas.gameLayout, { recordHistory: false });
             applySaveSettings(globalSettings);
           } finally {
             startupRestoreIsApplying = false;
@@ -173,7 +174,7 @@ export function useAutosave(): void {
       });
 
     const unsub = useFlowStore.subscribe(
-      (state) => ({ nodes: state.nodes, edges: state.edges }),
+      (state) => ({ nodes: state.nodes, edges: state.edges, gameLayout: state.gameLayout }),
       () => {
         dirtyVersion++;
         if (!startupRestoreIsApplying && !startupResolved) {
@@ -181,7 +182,10 @@ export function useAutosave(): void {
         }
       },
       {
-        equalityFn: (prev, next) => prev.nodes === next.nodes && prev.edges === next.edges,
+        equalityFn: (prev, next) =>
+          prev.nodes === next.nodes &&
+          prev.edges === next.edges &&
+          prev.gameLayout === next.gameLayout,
       },
     );
 

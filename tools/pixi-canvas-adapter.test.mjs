@@ -324,7 +324,7 @@ test('v1 projection preserves app IDs, port order, app data, routes, groups, and
     transformer.serializeCanvas(useFlowStore.getState().nodes, useFlowStore.getState().edges),
     saveBefore,
   );
-  assert.equal(transformer.CURRENT_SAVE_VERSION, 4);
+  assert.equal(transformer.CURRENT_SAVE_VERSION, 5);
 });
 
 test('collapsed group proxy ports remain after edge deletion and clear on expand-collapse', () => {

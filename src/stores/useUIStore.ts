@@ -2,6 +2,19 @@ import { create } from 'zustand';
 import type { RateMode } from '../types/ui';
 
 export type CanvasToggleId = 'delete_mode' | 'multi_select' | 'target';
+export type ViewMode = 'flowchart' | 'ingame';
+
+const VIEW_MODE_KEY = 'industrialist.viewMode';
+
+function readViewMode(): ViewMode {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem(VIEW_MODE_KEY) === 'ingame'
+      ? 'ingame'
+      : 'flowchart';
+  } catch {
+    return 'flowchart';
+  }
+}
 
 export interface ConfirmOptions {
   title: string;
@@ -32,6 +45,9 @@ interface UIState {
   preselectedNodeId: string | null;
   preselectedHandleIndex: number | null;
   rateMode: RateMode;
+  /** Flowchart (planner graph) or the in-game layout editor. */
+  viewMode: ViewMode;
+  setViewMode: (mode: ViewMode) => void;
   currentResearchPoints: number;
   targetResearchPoints: number | undefined;
   researchTargetIds: string[];
@@ -128,6 +144,15 @@ const useUIStore = create<UIState>((set) => ({
   preselectedNodeId: null,
   preselectedHandleIndex: null,
   rateMode: 'second',
+  viewMode: readViewMode(),
+  setViewMode: (mode) => {
+    try {
+      localStorage.setItem(VIEW_MODE_KEY, mode);
+    } catch {
+      // storage unavailable: the choice just is not remembered
+    }
+    set({ viewMode: mode });
+  },
   currentResearchPoints: 0,
   targetResearchPoints: undefined,
   researchTargetIds: [],

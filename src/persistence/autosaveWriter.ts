@@ -24,12 +24,13 @@ function getCanvasFingerprint(data: SaveData): string {
     nodes: data.nodes,
     edges: data.edges,
     globalSettings: data.globalSettings,
+    gameLayout: data.gameLayout,
   });
 }
 
 export function establishAutosaveBaseline(record: AutosaveRecord | null): void {
   const flow = useFlowStore.getState();
-  const snapshot = serializeCanvas(flow.nodes, flow.edges, []);
+  const snapshot = serializeCanvas(flow.nodes, flow.edges, [], flow.gameLayout);
   baselineFingerprint = getCanvasFingerprint(snapshot);
   const modifiedAt = record?.modifiedAt;
   baselineModifiedAt = record
@@ -99,7 +100,7 @@ export function saveCurrentAutosave(
     const settings = useGlobalSettingsStore.getState();
     const overrides = await getDataOverrides();
     const targetId = protectedWriteTargets.get(tabId) ?? tabId;
-    const data = serializeCanvas(flow.nodes, flow.edges, overrides);
+    const data = serializeCanvas(flow.nodes, flow.edges, overrides, flow.gameLayout);
     const fingerprint = getCanvasFingerprint(data);
     const changed = baselineFingerprint !== undefined && fingerprint !== baselineFingerprint;
     const publishLatest = changed || forceLatestPublication || latestPublicationPending;

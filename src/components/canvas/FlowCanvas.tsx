@@ -20,7 +20,12 @@ import {
   FIRST_PRODUCTION_CHAIN_TUTORIAL_ID,
 } from '../../tutorials/firstProductionChain';
 
+import { ViewModeSwitch } from '../gameLayout/ViewModeSwitch';
 import styles from './FlowCanvas.module.css';
+
+const LazyGameLayoutView = React.lazy(() =>
+  import('../gameLayout/GameLayoutView').then((m) => ({ default: m.GameLayoutView })),
+);
 
 interface PixiCanvasMountProps {
   onUnavailable(error: unknown): void;
@@ -177,6 +182,7 @@ export function FlowCanvas() {
   const isResearchOverlayOpen = useUIStore((s) => s.isResearchOverlayOpen);
   const isHelpOverlayOpen = useUIStore((s) => s.isHelpOverlayOpen);
   const isLPSolverOpen = useUIStore((s) => s.isLPSolverOpen);
+  const viewMode = useUIStore((s) => s.viewMode);
   const isTransformingStore = useUIStore((s) => s.isTransforming);
   const isZoomedOutStore = useUIStore((s) => s.isZoomedOut);
   const isExporting = useUIStore((s) => s.isExporting);
@@ -398,7 +404,13 @@ export function FlowCanvas() {
 
   return (
     <div className={containerClassName}>
-      {usePixiCanvas ? (
+      {viewMode === 'ingame' ? (
+        <Suspense
+          fallback={<LoadingScreen title="In-game layout" subtitle="Loading the layout editor…" />}
+        >
+          <LazyGameLayoutView />
+        </Suspense>
+      ) : usePixiCanvas ? (
         <PixiCanvasMount
           onUnavailable={handlePixiUnavailable}
           onBackendActive={handlePixiBackendActive}
@@ -407,6 +419,7 @@ export function FlowCanvas() {
       ) : (
         <FlowViewport />
       )}
+      <ViewModeSwitch />
       {fallbackNoticeVisible && (
         <div className={styles['renderer-fallback-notice']} role="status">
           <span>Using React Flow as renderer instead.</span>
@@ -419,7 +432,7 @@ export function FlowCanvas() {
           </button>
         </div>
       )}
-      <ControlsTray />
+      {viewMode === 'flowchart' && <ControlsTray />}
       <OverlaysTray />
       <DashboardPanels />
       <TutorialController />

@@ -49,6 +49,9 @@ jobs:
       - name: Test group layout integrity
         run: npm run test:layout
 
+      - name: Test in-game layout editor and generator
+        run: npm run test:game-layout
+
       - name: Test calculation validation and production flow
         run: npm run test:calculation
 

@@ -1,5 +1,6 @@
 import type { MachineCountConstraint } from './nodes';
 import type { GameDifficulty, GameMonth } from './globalSettings';
+import type { GameLayoutDoc } from '../gameLayout/docSchema';
 
 export interface SavedRecipeNode {
   id: string;
@@ -55,6 +56,8 @@ export interface SaveData {
   edges: SavedEdge[];
   globalSettings?: GlobalSettings;
   dataOverrides?: { id: string; data: Record<string, unknown> }[];
+  /** In-game layout (save version 5+). */
+  gameLayout?: GameLayoutDoc;
 }
 
 export interface SaveRecord {
