@@ -35,6 +35,11 @@ try {
         seed: flag('seed', 0),
         quantumJump: 3,
         pinned,
+        tuning: {
+          slack: flag('slack', undefined),
+          stallLimit: flag('stall', undefined),
+          useModules: flags.includes('--no-modules') ? false : undefined,
+        },
       },
       { log: (l) => (verbose || !l.startsWith('    ')) && console.log(l) },
     );
@@ -45,7 +50,8 @@ try {
     );
     const view = evaluateDoc(buildContext(buildProblem(input, {})), res.doc);
     const byCode = {};
-    for (const p of view.problems) byCode[`${p.severity}:${p.code}`] = (byCode[`${p.severity}:${p.code}`] ?? 0) + 1;
+    for (const p of view.problems)
+      byCode[`${p.severity}:${p.code}`] = (byCode[`${p.severity}:${p.code}`] ?? 0) + 1;
     console.log('EDITOR PROBLEMS', JSON.stringify(byCode));
     for (const p of view.problems.filter((p) => p.severity === 'error').slice(0, 8)) {
       console.log('  -', p.message, JSON.stringify(p.tiles.slice(0, 2)));
@@ -58,7 +64,10 @@ try {
   if (nPin) {
     const doc = res.doc;
     const keys = new Set(doc.machines.slice(0, nPin).map((m) => m.key));
-    const pinnedDoc = { ...doc, machines: doc.machines.map((m) => (keys.has(m.key) ? { ...m, pinned: true } : m)) };
+    const pinnedDoc = {
+      ...doc,
+      machines: doc.machines.map((m) => (keys.has(m.key) ? { ...m, pinned: true } : m)),
+    };
     console.log(`--- rerun with ${keys.size} pinned machine(s)`);
     const res2 = run(pinnedDoc);
     let moved = 0;

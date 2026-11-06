@@ -81,6 +81,8 @@ export interface LayoutOptions {
   config?: Partial<LayoutConfig>;
   /** The current document: its pinned machines / pipes / pieces are kept as they are. */
   pinned?: GameLayoutDoc;
+  /** Internal tuning (benchmarks). */
+  tuning?: { slack?: number; stallLimit?: number; useModules?: boolean };
 }
 
 export interface LayoutSummary {

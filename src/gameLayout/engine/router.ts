@@ -885,11 +885,14 @@ export class Router {
     let ok = false;
     let best: { score: number; snap: ReturnType<Router['snapshot']> } | null = null;
     const keepBest = () => {
+      this.markUnrouted();
       const sc = this.overusedCells().length + 50 * this.failed.size;
       if (!best || sc < best.score) best = { score: sc, snap: this.snapshot() };
       return sc;
     };
+    let roundStart: number;
     for (let round = 0; round < 12 && clock() < deadline; round++) {
+      roundStart = clock();
       // phase A: large pipes on their own (normal pipes removed)
       for (const ni of small) this.ripup(ni);
       this.largeFrozen = false;
@@ -911,6 +914,8 @@ export class Router {
       ok = okL && okS;
       keepBest();
       if (ok || !large.length || clock() > deadline - 0.5) break;
+      // a new round rips up every large pipe: only start one that can finish
+      if (deadline - clock() < (clock() - roundStart) * 0.9) break;
       const pushed = this.pushLargePipes(small);
       log?.(`    round ${round + 1}: pushing large pipes off ${pushed} tiles`);
       if (!pushed) {
@@ -923,6 +928,7 @@ export class Router {
       for (const ni of large) this.ripup(ni);
     }
     this.largeFrozen = false;
+    this.markUnrouted();
     const b = best as { score: number; snap: ReturnType<Router['snapshot']> } | null;
     if (!ok && b) {
       this.restore(b.snap);
@@ -984,6 +990,15 @@ export class Router {
     const path = this.astar(sources, targets, large, ownGen, [0, 0, this.gw - 1, this.gh - 1]);
     this.largeFrozen = false;
     return path;
+  }
+
+  /** Nets left without a route (e.g. time ran out before they were rerouted) count as failed. */
+  private markUnrouted(): void {
+    this.nets.forEach((net, ni) => {
+      const needed =
+        net.terms.filter((t) => t.size > 0).length >= 2 || net.terms.some((t) => !t.size);
+      if (needed && !this.tree[ni].size) this.failed.add(ni);
+    });
   }
 
   /** Routing state of every net (for keeping the best round). */

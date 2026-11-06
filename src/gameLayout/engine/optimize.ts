@@ -37,6 +37,8 @@ export interface OptimizeOptions {
   shouldStop?: () => boolean;
   /** Machines / pipes the player pinned: kept exactly as they are, the rest goes around. */
   pinned?: PinnedSpec;
+  /** Negotiation passes without improvement before a routing round gives up. */
+  stallLimit?: number;
 }
 
 export interface PinnedSpec {
@@ -448,6 +450,7 @@ export function optimize(problem: Problem, o: OptimizeOptions): Solution {
     attempt++;
     o.log(`Attempt ${attempt} (${phase}): ${Math.max(0, left()).toFixed(0)}s left`);
     const r = realize(problem, blocks, info, o.jump, o.pinned);
+    if (o.stallLimit) r.router.stallLimit = o.stallLimit;
     // a bounded share per attempt, so corridors can be widened / tightened several times
     const routeTime = Math.max(minAttemptTime, Math.min(left() * 0.3, 45));
     const ok = r.router.run(routeTime, 60, o.log, clock);
