@@ -17,13 +17,17 @@ import { buildLayoutInput } from '../../gameLayout/input';
 import { useDataStore } from '../../stores/useDataStore';
 import { useFlowResultStore } from '../../stores/useFlowResultStore';
 import { useFlowStore } from '../../stores/useFlowStore';
+import { useGameLayoutStore } from '../../stores/useGameLayoutStore';
 
 export interface LayoutViewModel {
   input: LayoutInput;
   ctx: LayoutContext;
   /** Current document (null = nothing placed yet). */
   doc: GameLayoutDoc | null;
-  /** Evaluated document (may lag the document by a frame on large layouts). */
+  /**
+   * Evaluated document (may lag the document by a frame on large layouts). While the generator
+   * runs this is its latest layout, so the canvas, size, problems and stats follow it live.
+   */
   view: DocView;
 }
 
@@ -54,7 +58,8 @@ export function useLayoutView(): LayoutViewModel {
   }, [nodes, edges, results, edgeFlows, inputTemps, nodeRecipes, dbVersion]);
 
   const ctx = useMemo(() => buildContext(buildProblem(input)), [input]);
-  const deferredDoc = useDeferredValue(doc);
+  const preview = useGameLayoutStore((s) => s.generator.preview);
+  const deferredDoc = useDeferredValue(preview ?? doc);
   // geometry and rule checks right away; flows and the even-split check from a worker
   const base = useMemo(
     () => evaluateDoc(ctx, deferredDoc ?? emptyLayoutDoc(), { analyse: false }),

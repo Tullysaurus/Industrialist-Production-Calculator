@@ -117,6 +117,22 @@ export function GameLayoutSidebar({ model }: { model: LayoutViewModel }) {
           value={`${view.doc.valves.length} · ${view.doc.passthroughs.length}`}
         />
         <Row
+          label="Empty tiles"
+          value={
+            x1 > x0
+              ? `${view.sol.hull.empty.toLocaleString()} (${Math.round((100 * view.sol.hull.empty) / Math.max(1, view.sol.hull.hull))}%)`
+              : '-'
+          }
+        />
+        <Row
+          label="Power (HV · MV · transformers)"
+          value={(() => {
+            const pw = view.doc.power ?? [];
+            const n = (k: string) => pw.filter((p) => p.kind === k).length;
+            return pw.length ? `${n('hv')} · ${n('mv')} · ${n('transformer')}` : '-';
+          })()}
+        />
+        <Row
           label="Problems"
           value={
             errors.length

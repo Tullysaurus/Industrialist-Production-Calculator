@@ -155,11 +155,8 @@ export function GameLayoutCanvas({ view, doc }: Props) {
   const preview = useGameLayoutStore((s) => s.generator.preview);
   const editor = useGameLayoutStore.getState;
 
-  // while the generator runs its latest layout is shown (read-only)
-  const shown = useMemo(
-    () => (preview ? evaluateDoc(view.ctx, preview, { analyse: false }) : view),
-    [preview, view],
-  );
+  // while the generator runs, the view is its latest layout (read-only)
+  const shown = view;
   const hit = useMemo(() => buildHitIndex(shown), [shown]);
   const setDoc = useFlowStore.getState().setGameLayout;
   const curDoc = () => useFlowStore.getState().gameLayout ?? emptyLayoutDoc();
