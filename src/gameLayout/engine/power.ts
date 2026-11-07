@@ -4,8 +4,8 @@
  * Game rules (as given; node positions on the poles are not in the game data, so every
  * connection keeps a safety margin):
  *  - HV pole: 12x12, 8 nodes of 120 MMF/s each, reaches machines / poles up to 70 tiles away
- *    (58 with the 12 tile margin).
- *  - MV pole (HMVT): 2x1, 4 nodes of 1.5 MMF/s each, reaches up to 22 tiles (18 with margin).
+ *    (66 with the 4 tile margin).
+ *  - MV pole (HMVT): 2x1, 4 nodes of 1.5 MMF/s each, reaches up to 22 tiles (20 with the 2 tile margin).
  *  - A node feeds any number of cables as long as their total stays within its rating; a
  *    cable to a downstream pole carries that pole's whole load and counts on the node it
  *    hangs from.
@@ -26,8 +26,8 @@ export type Voltage = 'HV' | 'MV';
 export type PowerKind = 'hv' | 'mv' | 'transformer' | 'grid';
 
 export const POLE = {
-  HV: { w: 12, h: 12, nodes: 8, rating: 120e6, range: 70, margin: 12 },
-  MV: { w: 2, h: 1, nodes: 4, rating: 1.5e6, range: 22, margin: 4 },
+  HV: { w: 12, h: 12, nodes: 8, rating: 120e6, range: 70, margin: 4 },
+  MV: { w: 2, h: 1, nodes: 4, rating: 1.5e6, range: 22, margin: 2 },
 } as const;
 
 export const TRANSFORMER = {
@@ -322,6 +322,42 @@ export class Ledger {
     }
   }
 
+  /**
+   * The piece that has no room when `amount` is drawn through piece i (the machine's own pole,
+   * or the first pole / transformer up the chain that is full), or -1 when it fits.
+   */
+  bottleneck(i: number, amount: number, hv = false): number {
+    let cur = i;
+    let nd = -1;
+    let a = amount;
+    if (hv && this.pieces[i].kind === 'transformer') {
+      if (this.draw(i) + a > TRANSFORMER.maxInput + 1e-6) return i;
+      nd = this.feedNode[i];
+      cur = this.parent[i];
+    }
+    while (cur >= 0) {
+      const sp = this.spec(cur);
+      if (sp) {
+        if (cur === i) {
+          const room = this.nodeUse[cur].reduce((r, u) => r + Math.max(0, sp.rating - u), 0);
+          if (room + 1e-6 < a) return cur;
+        } else if (nd < 0) {
+          if (!this.nodeUse[cur].some((u) => u + a <= sp.rating + 1e-6)) return cur;
+        } else if (this.nodeUse[cur][nd] + a > sp.rating + 1e-6) {
+          return cur;
+        }
+      }
+      if (this.pieces[cur].kind === 'transformer') {
+        if (this.load[cur] + a > TRANSFORMER.maxInput + 1e-6) return cur;
+        if (this.draw(cur) + a / (1 - TRANSFORMER.loss) > TRANSFORMER.maxInput + 1e-6) return cur;
+        a /= 1 - TRANSFORMER.loss;
+      }
+      nd = this.feedNode[cur];
+      cur = this.parent[cur];
+    }
+    return -1;
+  }
+
   /** What piece j takes from its parent. */
   draw(j: number): number {
     return this.pieces[j].kind === 'transformer'
@@ -463,7 +499,9 @@ export function solvePower(
     const ok = cands.find(([, i]) => fits(i, c.load, hv));
     const i = ok ? ok[1] : cands[0][1];
     if (!ok) {
-      overloaded.add(i);
+      // blame the piece that is actually full (often a pole further up the chain)
+      const full = ledger.bottleneck(i, c.load, hv);
+      overloaded.add(full >= 0 ? full : i);
       forced.push(ci);
     }
     feed[ci] = i;
@@ -474,11 +512,12 @@ export function solvePower(
   for (const i of overloaded) {
     const p = pieces[i];
     const sp = ledger.spec(i);
+    const mm = (v: number) => (v / 1e6).toFixed(2);
     problems.push({
       code: 'power-overload',
       message: sp
-        ? `${pieceName(p.kind)} (or a pole / transformer feeding it) cannot carry its machines: ${fmt(load[i])} over ${sp.nodes} nodes of ${fmt(sp.rating)}`
-        : `HV transformer (or the pole feeding it) cannot carry its machines: ${fmt(load[i])} out on MV, ${fmt(ledger.draw(i))} in on HV, at most ${fmt(TRANSFORMER.maxInput)} each`,
+        ? `${pieceName(p.kind)} is over capacity: its nodes carry ${nodeUse[i].map(mm).join(' / ')} MMF/s, at most ${mm(sp.rating)} each`
+        : `HV transformer is over capacity: ${fmt(load[i])} out on MV, ${fmt(ledger.draw(i))} in on HV, at most ${fmt(TRANSFORMER.maxInput)} each`,
       tiles: [tileOf(p)],
       pieceId: p.id,
     });

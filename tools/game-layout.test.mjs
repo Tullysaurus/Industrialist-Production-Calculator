@@ -407,8 +407,8 @@ test('power: reach, capacity and the grid are checked', async () => {
   const ti = pieces.indexOf(tr);
   assert.ok(Math.abs(r.load[pieces.indexOf(hv)] - (5e6 + 1e6 / 0.85)) < 1);
   assert.equal(r.load[ti], 1e6);
-  // out of reach (MV: 22 - 4 tiles)
-  r = PW.solvePower([consumer('0|0', [51 + 19, 0.5], 'MV', 1)], pieces);
+  // out of reach (MV: 22 - 2 tiles)
+  r = PW.solvePower([consumer('0|0', [51 + 21, 0.5], 'MV', 1)], pieces);
   assert.equal(r.unpowered.size, 1);
   assert.equal(r.problems[0].code, 'unpowered');
   // an MV pole has 4 nodes of 1.5 MMF/s: five 1.4 MMF/s machines do not fit
@@ -433,8 +433,17 @@ test('power: reach, capacity and the grid are checked', async () => {
   assert.deepEqual(r.feed, [2, 2], 'both on the transformer');
   assert.ok(Math.abs(r.load[1] - (2e6 / 0.85 + 10e6)) < 1, 'HV pole feeds both');
   // at most 240 MMF/s on each side
-  r = PW.solvePower([consumer('0|0', [43.5, 64], 'HV', 250e6)], [grid, hv, tr]); // HV pole out of reach
+  r = PW.solvePower([consumer('0|0', [45, 70], 'HV', 250e6)], [grid, hv, tr]); // HV pole out of reach
   assert.ok(r.problems.some((p) => p.code === 'power-overload'));
+  // the error names the piece that is full: here the pole feeding the machines' pole, whose
+  // single node carries both machines (2 MMF/s over a 1.5 MMF/s node)
+  const mv2 = { id: 'm2', kind: 'mv', x: 68, y: 0, rot: 0, feed: 'm' };
+  r = PW.solvePower(
+    [consumer('0|0', [80, 0.5], 'MV', 1e6), consumer('1|0', [80, 0.5], 'MV', 1e6)],
+    [...pieces, mv2],
+  );
+  const over = r.problems.filter((p) => p.code === 'power-overload').map((p) => p.pieceId);
+  assert.deepEqual(over, ['m'], 'the feeding pole, not the machines own pole');
   // no grid connection: nothing is powered
   r = PW.solvePower([consumer('0|0', [61, 0.5], 'MV', 1)], [hv, tr, mv]);
   assert.ok(r.problems.some((p) => p.code === 'no-grid'));
