@@ -68,6 +68,15 @@ the flowchart changes (new machines appear as unplaced, removed ones are flagged
   back-to-back pair sharing a corridor), ports facing the shared corridors (inputs on one side,
   outputs on the other) and production in flow order (raw materials to products, along
   whichever axis fits better), with a tidy-vs-compact slider for how much space they may cost.
+- **Quantum piping** (generator option, on by default): pipe nodes connect when they touch, so
+  a pipe or piece touching any node of a machine feeds that machine's inputs (any kind or size
+  of node), and an output can be taken from any node within 3 tiles of its port (not from one
+  near another output's port). The generator uses this to feed machines through whichever node
+  is nearest, to cross a normal pipe straight into a large node through a passthrough laid flat
+  against it (the coal power plant pattern: coal in through the exhaust node, exhaust out along
+  the face), and to let two large pipes share a node through an intersection piece on it (one
+  feeds the machine, the other takes its output). Normal pipes may also hop over up to 3 tiles
+  of other normal pipes. The rule checks always accept these connections.
 - **Power**: the generator places HV poles (12x12, 8 nodes of 120 MMF/s, reach 70 tiles),
   MV poles (2x1, 4 nodes of 1.5 MMF/s, reach 22 tiles), HV transformers (8x8, 15 % loss
   without coolant, at most 240 MMF/s on each side; machines can connect straight to either side
