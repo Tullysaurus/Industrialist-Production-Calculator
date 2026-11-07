@@ -107,7 +107,6 @@ interface GameLayoutEditorState {
   /** Draw power cables. */
   showPower: boolean;
   showLabels: boolean;
-  rerouteOnMove: boolean;
   /** Tiles to flash / zoom to (problem list). */
   focus: { tiles: [number, number][]; id: number } | null;
   fitRequest: number;
@@ -127,7 +126,6 @@ interface GameLayoutEditorState {
   toggleArrows: () => void;
   togglePower: () => void;
   toggleLabels: () => void;
-  toggleRerouteOnMove: () => void;
   focusTiles: (tiles: [number, number][]) => void;
   requestFit: () => void;
   setOptions: (o: Partial<GeneratorOptions>) => void;
@@ -154,7 +152,6 @@ export const useGameLayoutStore = create<GameLayoutEditorState>((set, get) => ({
   showArrows: true,
   showPower: true,
   showLabels: true,
-  rerouteOnMove: true,
   focus: null,
   fitRequest: 0,
   options: readOptions(),
@@ -173,7 +170,6 @@ export const useGameLayoutStore = create<GameLayoutEditorState>((set, get) => ({
   toggleArrows: () => set((s) => ({ showArrows: !s.showArrows })),
   togglePower: () => set((s) => ({ showPower: !s.showPower })),
   toggleLabels: () => set((s) => ({ showLabels: !s.showLabels })),
-  toggleRerouteOnMove: () => set((s) => ({ rerouteOnMove: !s.rerouteOnMove })),
   focusTiles: (tiles) => set({ focus: { tiles, id: ++seq } }),
   requestFit: () => set((s) => ({ fitRequest: s.fitRequest + 1 })),
   setOptions: (o) => {

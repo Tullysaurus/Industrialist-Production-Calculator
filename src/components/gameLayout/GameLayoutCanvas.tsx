@@ -25,12 +25,7 @@ import { edgeKey } from '../../gameLayout/engine/flows';
 import { accessCells, largeAnchor } from '../../gameLayout/engine/geometry';
 import { EDGE_CROSS, EDGE_STEP } from '../../gameLayout/engine/router';
 import { key, kx, ky } from '../../gameLayout/engine/solution';
-import {
-  buildEditorGrid,
-  routeNetworks,
-  withPiecesFor,
-  type EditorGrid,
-} from '../../gameLayout/routeTools';
+import { buildEditorGrid, withPiecesFor, type EditorGrid } from '../../gameLayout/routeTools';
 import { useFlowStore } from '../../stores/useFlowStore';
 import { isPowerTool, useGameLayoutStore } from '../../stores/useGameLayoutStore';
 import { drawLayout, readTheme, type Camera, type Overlay } from './renderer';
@@ -460,26 +455,6 @@ export function GameLayoutCanvas({ view, doc }: Props) {
     return out;
   };
 
-  const rerouteAfterMove = (before: GameLayoutDoc, moved: GameLayoutDoc, sel: Selection) => {
-    if (!editor().rerouteOnMove) return moved;
-    const insts = new Set<number>();
-    for (const k of sel.machines) {
-      const g = view.ctx.instByKey.get(k);
-      if (g !== undefined) insts.add(g);
-    }
-    const nets = P.nets
-      .map((n, i) => [n, i] as const)
-      .filter(([n]) => !sel.pipes.has(n.key) && n.terminals.some((t) => insts.has(t.inst)))
-      .filter(
-        ([n]) =>
-          moved.pipes.some((p) => p.net === n.key) || before.pipes.some((p) => p.net === n.key),
-      )
-      .map(([, i]) => i);
-    if (!nets.length) return moved;
-    const v2 = evaluateDoc(view.ctx, moved, { analyse: false });
-    return routeNetworks(v2, nets, 3).doc;
-  };
-
   // ---------------------------------------------------------------- pointer
   const onPointerDown = (ev: React.PointerEvent) => {
     const [tx, ty, px, py] = toTile(ev);
@@ -724,7 +699,8 @@ export function GameLayoutCanvas({ view, doc }: Props) {
       const dy = ty - gs.ty;
       if (gs.moved && (dx || dy)) {
         const moved = moveItems(gs.before, st.selection, dx, dy);
-        setDoc(rerouteAfterMove(gs.before, moved, st.selection), { before: gs.before });
+        // pipes stay as they are; the player re-routes when they choose to
+        setDoc(moved, { before: gs.before });
       }
       setOverlay((o) => ({ ...o, drag: null, ghosts: [] }));
     } else if (gs.kind === 'marquee') {
