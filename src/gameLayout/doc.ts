@@ -622,23 +622,9 @@ export function evaluateDoc(
       fail('the pipe must run straight through all three tiles, alone');
       continue;
     }
-    const nb = (t: number) => {
-      const out = new Set<number>();
-      const e = netEdges[ni];
-      for (let i = 0; i < e.length; i += 3) {
-        if (e[i] === t) out.add(e[i + 1]);
-        if (e[i + 1] === t) out.add(e[i]);
-      }
-      return out;
-    };
-    const [inAt, stAt, sdAt] = [g.inAt, g.straightAt, g.sideAt].map(([x, y]) => key(x, y));
-    const okA = [...nb(A)].every((t) => t === M || t === inAt) && nb(A).has(inAt);
-    const okE = [...nb(E)].every((t) => t === M || t === stAt);
-    const okM = [...nb(M)].every((t) => t === A || t === E || t === sdAt);
-    if (!okA || !okE || !okM) {
-      fail('pipes must enter at the in end and leave straight through or out of the side');
-      continue;
-    }
+    // no check on which way pipes enter or leave: with quantum piping a valve works whatever
+    // direction its connections come from (even perpendicular to the main pipe)
+    const sdAt = key(g.sideAt[0], g.sideAt[1]);
     valves.push({
       net: ni,
       label: net.label,
