@@ -84,6 +84,8 @@ export interface Overlay {
   drag: { dx: number; dy: number } | null;
   marquee: [number, number, number, number] | null;
   hover: [number, number] | null;
+  /** Item under the pointer (select tool): a machine instance, a pipe network or a piece. */
+  hoverItem: { inst: number } | { net: number } | { piece: string } | null;
   /** Highlighted network (pipe tool). */
   activeNet: number | null;
   focus: [number, number][] | null;
@@ -171,6 +173,7 @@ export function drawLayout(
 
   // ---- pipes
   const boxes = netBBoxes(view);
+  const hoverNet = ov.hoverItem && !ov.drag && 'net' in ov.hoverItem ? ov.hoverItem.net : -1;
   const an = view.analysis;
   P.nets.forEach((net, ni) => {
     const nodes = view.sol.netNodes[ni];
@@ -202,6 +205,15 @@ export function drawLayout(
       g.moveTo(X(kx(e[i]) + dx + off), Y(ky(e[i]) + dy + off));
       g.lineTo(X(kx(f) + dx + 1), Y(ky(f) + dy + 1));
       g.lineTo(X(kx(e[i + 1]) + dx + off), Y(ky(e[i + 1]) + dy + off));
+    }
+    if (hoverNet === ni && !selected) {
+      // hovered (like a hovered flowchart node): a glow under the pipe
+      g.save();
+      g.strokeStyle = theme.primary;
+      g.globalAlpha = 0.5;
+      g.lineWidth += Math.max(4, s * 0.5);
+      g.stroke();
+      g.restore();
     }
     g.stroke();
     // hops and passthrough crossings: dashed
@@ -462,6 +474,7 @@ export function drawLayout(
     g.lineWidth = 3;
     for (const [x, y] of ov.focus.slice(0, 200)) g.strokeRect(X(x) - 3, Y(y) - 3, s + 6, s + 6);
   }
+  if (ov.hoverItem && !ov.drag) drawHover(g, view, theme, s, X, Y, ov.hoverItem, opt.showLabels);
   if (ov.hover) {
     const [x, y] = ov.hover;
     g.strokeStyle = theme.text;
@@ -712,4 +725,74 @@ function fit(g: CanvasRenderingContext2D, text: string, maxW: number): string {
   let t = text;
   while (t.length > 3 && g.measureText(`${t}…`).width > maxW) t = t.slice(0, -1);
   return `${t}…`;
+}
+
+/** Tiles (as rects) of the valve, passthrough, intersection or power piece with this id. */
+function pieceRects(doc: GameLayoutDoc, id: string): [number, number, number, number][] {
+  const v = doc.valves.find((x) => x.id === id);
+  if (v)
+    return [valveGeometry(v).a, valveGeometry(v).m, valveGeometry(v).e].map(([x, y]) => [
+      x,
+      y,
+      1,
+      1,
+    ]);
+  const pt = doc.passthroughs.find((x) => x.id === id);
+  if (pt)
+    return [[pt.x, pt.y, ...(pt.horizontal ? [4, 2] : [2, 4])] as [number, number, number, number]];
+  const it = doc.intersections.find((x) => x.id === id);
+  if (it) return [[it.x, it.y, 2, 2]];
+  const pp = (doc.power ?? []).find((x) => x.id === id);
+  if (pp) return [[pp.x, pp.y, ...pieceSize(pp.kind, pp.rot)]];
+  return [];
+}
+
+/**
+ * Highlight of the item under the pointer, like a hovered flowchart node: a primary outline
+ * around a machine or piece, and the machine's name even where labels are hidden (a hovered
+ * pipe glows where the pipes are drawn).
+ */
+function drawHover(
+  g: CanvasRenderingContext2D,
+  view: DocView,
+  theme: Theme,
+  s: number,
+  X: (x: number) => number,
+  Y: (y: number) => number,
+  item: NonNullable<Overlay['hoverItem']>,
+  labelsShown: boolean,
+): void {
+  g.save();
+  g.strokeStyle = theme.primary;
+  g.lineWidth = 2;
+  // outside the item's own border, so it shows whatever colour that border is
+  if ('inst' in item) {
+    const m = view.sol.machines.find((x) => x.inst === item.inst);
+    if (m) {
+      for (const r of m.shape.rects) {
+        g.strokeRect(X(m.x + r.x) - 3, Y(m.y + r.y) - 3, r.w * s + 6, r.h * s + 6);
+      }
+      const node = view.ctx.problem.nodes[m.node];
+      const label = `${node.shape.name} #${m.local + 1}`;
+      if (!labelsShown || m.shape.w * s < 40) {
+        // above the machine, on a backing, so it reads at any zoom
+        g.font = '12px system-ui, sans-serif';
+        g.textAlign = 'center';
+        g.textBaseline = 'bottom';
+        const cx = X(m.x + m.shape.w / 2);
+        const by = Y(m.y) - 4;
+        const w = g.measureText(label).width + 10;
+        g.fillStyle = theme.bg;
+        g.fillRect(cx - w / 2, by - 17, w, 17);
+        g.strokeRect(cx - w / 2, by - 17, w, 17);
+        g.fillStyle = theme.text;
+        g.fillText(label, cx, by - 2);
+      }
+    }
+  } else if ('piece' in item) {
+    for (const [x, y, w, h] of pieceRects(view.doc, item.piece)) {
+      g.strokeRect(X(x) - 3, Y(y) - 3, w * s + 6, h * s + 6);
+    }
+  }
+  g.restore();
 }

@@ -128,6 +128,7 @@ export function GameLayoutCanvas({ view, doc }: Props) {
     drag: null,
     marquee: null,
     hover: null,
+    hoverItem: null,
     activeNet: null,
     focus: null,
   });
@@ -313,7 +314,7 @@ export function GameLayoutCanvas({ view, doc }: Props) {
       const wy = c.y + py / c.scale;
       const scale = Math.min(
         MAX_SCALE,
-        Math.max(MIN_SCALE, c.scale * Math.exp(-ev.deltaY * 0.0015)),
+        Math.max(MIN_SCALE, c.scale * Math.exp(-ev.deltaY * 0.001)),
       );
       cam.current = { scale, x: wx - px / scale, y: wy - py / scale };
       draw();
@@ -326,6 +327,43 @@ export function GameLayoutCanvas({ view, doc }: Props) {
     c.addEventListener('wheel', onWheel, { passive: false });
     return () => c.removeEventListener('wheel', onWheel);
   }, [onWheel]);
+
+  // two-finger pinch zooms around the midpoint and pans with it, as on the flowchart
+  const pointers = useRef(new Map<number, [number, number]>());
+  const pinch = useRef<{ d: number; mx: number; my: number } | null>(null);
+  const pinchState = () => {
+    const [a, b] = [...pointers.current.values()];
+    return {
+      d: Math.hypot(b[0] - a[0], b[1] - a[1]),
+      mx: (a[0] + b[0]) / 2,
+      my: (a[1] + b[1]) / 2,
+    };
+  };
+
+  // hold Space to pan with the left button, as on the flowchart
+  const spaceDown = useRef(false);
+  const [panning, setPanning] = useState(false);
+  const [cursor, setCursor] = useState('');
+  const hoverCursor = useRef('');
+  useEffect(() => {
+    const typing = (t: EventTarget | null) =>
+      t instanceof HTMLElement &&
+      (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(t.tagName));
+    const down = (ev: KeyboardEvent) => {
+      if (ev.code !== 'Space' || typing(ev.target)) return;
+      spaceDown.current = true;
+      ev.preventDefault();
+    };
+    const up = (ev: KeyboardEvent) => {
+      if (ev.code === 'Space') spaceDown.current = false;
+    };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+    };
+  }, []);
 
   // ---------------------------------------------------------------- helpers
   const P = view.ctx.problem;
@@ -460,10 +498,20 @@ export function GameLayoutCanvas({ view, doc }: Props) {
     const [tx, ty, px, py] = toTile(ev);
     const t = key(tx, ty);
     (ev.target as Element).setPointerCapture(ev.pointerId);
+    pointers.current.set(ev.pointerId, [px, py]);
+    if (pointers.current.size === 2) {
+      // a second finger: cancel whatever the first one started and pinch instead
+      gesture.current = null;
+      setOverlay((o) => ({ ...o, drag: null, ghosts: [], marquee: null, pipePreview: null }));
+      pinch.current = pinchState();
+      return;
+    }
+    if (pointers.current.size > 2) return;
     const st = editor();
     if (st.tool !== 'pipe') pending.current = null;
-    if (ev.button === 1 || ev.button === 2 || readOnly) {
+    if (ev.button === 1 || ev.button === 2 || spaceDown.current || readOnly) {
       gesture.current = { kind: 'pan', sx: px, sy: py, cx: cam.current.x, cy: cam.current.y };
+      setPanning(true);
       return;
     }
     if (st.placing) {
@@ -495,6 +543,7 @@ export function GameLayoutCanvas({ view, doc }: Props) {
           else {
             st.clearSelection();
             gesture.current = { kind: 'pan', sx: px, sy: py, cx: cam.current.x, cy: cam.current.y };
+            setPanning(true);
           }
           return;
         }
@@ -591,11 +640,48 @@ export function GameLayoutCanvas({ view, doc }: Props) {
 
   const onPointerMove = (ev: React.PointerEvent) => {
     const [tx, ty, px, py] = toTile(ev);
+    if (pointers.current.has(ev.pointerId)) pointers.current.set(ev.pointerId, [px, py]);
+    if (pinch.current && pointers.current.size === 2) {
+      const prev = pinch.current;
+      const next = pinchState();
+      if (prev.d > 0 && next.d > 0) {
+        const c = cam.current;
+        const wx = c.x + prev.mx / c.scale;
+        const wy = c.y + prev.my / c.scale;
+        const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, (c.scale * next.d) / prev.d));
+        cam.current = { scale, x: wx - next.mx / scale, y: wy - next.my / scale };
+        draw();
+      }
+      pinch.current = next;
+      return;
+    }
     const t = key(tx, ty);
     const gs = gesture.current;
     setHover(gs ? null : { tile: [tx, ty], px, py });
     const st = editor();
     const ov: Partial<Overlay> = { hover: [tx, ty] };
+    // what the pointer is over: highlighted like a hovered flowchart node, with a matching cursor
+    let cursor = '';
+    if (!gs && !st.placing && st.tool === 'select') {
+      const t = key(tx, ty);
+      const piece = hit.pieceAt.get(t);
+      const inst = hit.machineAt.get(t);
+      const ni = hit.netsAt.get(t)?.[0];
+      if (piece) {
+        ov.hoverItem = { piece };
+        cursor = readOnly ? '' : 'grab';
+      } else if (inst !== undefined) {
+        ov.hoverItem = { inst };
+        cursor = readOnly ? '' : 'grab';
+      } else if (ni !== undefined) {
+        ov.hoverItem = { net: ni };
+        cursor = 'pointer';
+      }
+    } else if (gs?.kind === 'drag') cursor = 'grabbing';
+    if (hoverCursor.current !== cursor) {
+      hoverCursor.current = cursor;
+      setCursor(cursor);
+    }
     if (gs?.kind === 'pan') {
       const c = cam.current;
       cam.current = { ...c, x: gs.cx - (px - gs.sx) / c.scale, y: gs.cy - (py - gs.sy) / c.scale };
@@ -684,11 +770,19 @@ export function GameLayoutCanvas({ view, doc }: Props) {
       pipePreview:
         ov.pipePreview ?? (gs?.kind === 'paint' || pending.current ? o.pipePreview : null),
       hover: ov.hover ?? null,
+      hoverItem: ov.hoverItem ?? null,
     }));
     draw();
   };
 
   const onPointerUp = (ev: React.PointerEvent) => {
+    pointers.current.delete(ev.pointerId);
+    if (pinch.current) {
+      // the pinch ends with the last finger; a finger left behind does nothing
+      if (pointers.current.size < 2) pinch.current = null;
+      return;
+    }
+    setPanning(false);
     const gs = gesture.current;
     gesture.current = null;
     const st = editor();
@@ -831,9 +925,13 @@ export function GameLayoutCanvas({ view, doc }: Props) {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        data-cursor={panning ? 'grabbing' : cursor || undefined}
         onPointerLeave={() => {
           setHover(null);
-          setOverlay((o) => ({ ...o, hover: null, pieceGhost: null }));
+          setOverlay((o) => ({ ...o, hover: null, hoverItem: null, pieceGhost: null }));
+          hoverCursor.current = '';
+          setCursor('');
         }}
         onContextMenu={(e) => e.preventDefault()}
         aria-label="In-game layout"

@@ -27,6 +27,19 @@
   touch-action: none;
 }
 
+/* over a machine or piece: grab; over a pipe: pointer; while panning or dragging: grabbing */
+.canvas[data-cursor='grab'] {
+  cursor: grab;
+}
+
+.canvas[data-cursor='pointer'] {
+  cursor: pointer;
+}
+
+.canvas[data-cursor='grabbing'] {
+  cursor: grabbing;
+}
+
 .empty {
   position: absolute;
   top: 50%;
@@ -485,14 +498,24 @@
   flex-direction: column;
   gap: 3px;
   max-width: 320px;
-  padding: 6px 8px;
+  padding: 8px 10px;
   font-size: 11px;
   line-height: 1.35;
-  color: var(--theme-color-text-primary);
+  color: var(--theme-color-text-secondary);
   pointer-events: none;
   background: var(--theme-color-bg-secondary);
   border: 1px solid var(--theme-color-border-light);
-  border-radius: 6px;
+  border-radius: 7px;
+}
+
+/* the first line names the hovered thing, like the flowchart's connection popup */
+.tooltip-coord + .tooltip-line {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tooltip-coord + .tooltip-line[data-tone='none'] {
+  color: var(--theme-color-text-primary);
 }
 
 .tooltip[data-flip-x='true'] {
@@ -524,7 +547,9 @@
 }
 
 .tooltip-detail {
-  color: var(--theme-color-text-secondary);
+  color: var(--theme-color-stat-value);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
   white-space: nowrap;
 }
 
