@@ -10,6 +10,7 @@ import {
   Maximize,
   MousePointer2,
   Pin,
+  PinOff,
   RefreshCw,
   RotateCw,
   Route,
@@ -21,6 +22,7 @@ import {
   Repeat2,
   UtilityPole,
   Waves,
+  X,
   Zap,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -38,17 +40,101 @@ import {
 import { useUIStore } from '../../stores/useUIStore';
 import styles from './GameLayout.module.css';
 
-const TOOLS: { id: EditorTool; label: string; key: string; Icon: typeof Spline }[] = [
-  { id: 'select', label: 'Select', key: 'V', Icon: MousePointer2 },
-  { id: 'pipe', label: 'Pipe', key: 'W', Icon: Spline },
-  { id: 'erase', label: 'Erase', key: 'E', Icon: Eraser },
-  { id: 'valve', label: 'Valve', key: 'Q', Icon: Gauge },
-  { id: 'passthrough', label: 'Passthru', key: 'T', Icon: ArrowLeftRight },
-  { id: 'intersection', label: 'Cross', key: 'I', Icon: Cross },
-  { id: 'hv', label: 'HV pole', key: 'H', Icon: UtilityPole },
-  { id: 'mv', label: 'MV pole', key: 'M', Icon: Plug },
-  { id: 'transformer', label: 'Transf.', key: 'K', Icon: Repeat2 },
-  { id: 'grid', label: 'Grid', key: 'G', Icon: PlugZap },
+interface ToolDef {
+  id: EditorTool;
+  label: string;
+  key: string;
+  Icon: typeof Spline;
+  /** What the tool does (tooltip). */
+  help: string;
+}
+
+const TOOL_GROUPS: { title: string; tools: ToolDef[] }[] = [
+  {
+    title: 'Edit',
+    tools: [
+      {
+        id: 'select',
+        label: 'Select',
+        key: 'V',
+        Icon: MousePointer2,
+        help: 'Click or drag a box to select machines, pipes and pieces; drag to move them',
+      },
+      {
+        id: 'pipe',
+        label: 'Draw pipe',
+        key: 'W',
+        Icon: Spline,
+        help: 'Click a port, then another port to lay a pipe between them, or paint tiles',
+      },
+      {
+        id: 'erase',
+        label: 'Erase tiles',
+        key: 'E',
+        Icon: Eraser,
+        help: 'Drag over tiles to remove the pipe tiles and pieces on them (machines stay)',
+      },
+    ],
+  },
+  {
+    title: 'Pipe pieces',
+    tools: [
+      {
+        id: 'valve',
+        label: 'Valve',
+        key: 'Q',
+        Icon: Gauge,
+        help: 'Place a valve control on a normal pipe (R rotates)',
+      },
+      {
+        id: 'passthrough',
+        label: 'Passthrough',
+        key: 'T',
+        Icon: ArrowLeftRight,
+        help: 'Place a passthrough where a normal pipe crosses a large pipe (R rotates)',
+      },
+      {
+        id: 'intersection',
+        label: 'Crossing',
+        key: 'I',
+        Icon: Cross,
+        help: 'Place a 2x2 intersection where two large pipes meet',
+      },
+    ],
+  },
+  {
+    title: 'Power',
+    tools: [
+      {
+        id: 'hv',
+        label: 'HV pole',
+        key: 'H',
+        Icon: UtilityPole,
+        help: 'Place an HV pole (12x12, 8 nodes of 120 MMF/s)',
+      },
+      {
+        id: 'mv',
+        label: 'MV pole',
+        key: 'M',
+        Icon: Plug,
+        help: 'Place an MV pole (2x1, 4 nodes of 1.5 MMF/s; R rotates)',
+      },
+      {
+        id: 'transformer',
+        label: 'Transformer',
+        key: 'K',
+        Icon: Repeat2,
+        help: 'Place an HV transformer (8x8; R rotates)',
+      },
+      {
+        id: 'grid',
+        label: 'Grid link',
+        key: 'G',
+        Icon: PlugZap,
+        help: 'Place the external HV grid connection',
+      },
+    ],
+  },
 ];
 
 const FLOW_LABEL: Record<FlowView, string> = {
@@ -70,6 +156,7 @@ function pinnedPart(doc: GameLayoutDoc | null): GameLayoutDoc | null {
     valves: doc.valves.filter((v) => v.pinned),
     passthroughs: doc.passthroughs.filter((p) => p.pinned),
     intersections: doc.intersections.filter((p) => p.pinned),
+    power: (doc.power ?? []).filter((p) => p.pinned),
   };
 }
 
@@ -158,7 +245,7 @@ export function GameLayoutTray({ model }: { model: LayoutViewModel }) {
     );
   };
 
-  const actions: {
+  type Action = {
     id: string;
     label: string;
     Icon: typeof Spline;
@@ -166,7 +253,8 @@ export function GameLayoutTray({ model }: { model: LayoutViewModel }) {
     disabled?: boolean;
     active?: boolean;
     title: string;
-  }[] = [
+  };
+  const layoutActions: Action[] = [
     {
       id: 'generate',
       label: running ? 'Stop' : 'Generate',
@@ -180,35 +268,90 @@ export function GameLayoutTray({ model }: { model: LayoutViewModel }) {
     },
     {
       id: 'autoroute',
-      label: 'Auto-route',
+      label: 'Route missing',
       Icon: Route,
       onClick: autoRoute,
       disabled: running || !doc,
-      title: 'Route every connection between placed machines that is not routed yet',
+      title: 'Lay pipes for every connection between placed machines that has none yet',
+    },
+  ];
+  const viewActions: Action[] = [
+    {
+      id: 'flow',
+      label: `Flows: ${FLOW_LABEL[flowView]}`,
+      Icon: Waves,
+      onClick: () => st().setFlowView(NEXT_FLOW[flowView]),
+      title:
+        'Which flows are shown (click to switch): as planned, with even splits, or as built (valves at their settings)',
     },
     {
-      id: 'reroute',
-      label: 'Re-route',
-      Icon: RefreshCw,
-      onClick: reroute,
-      disabled: running || !hasSelection,
-      title: 'Re-route the selected pipes and the pipes of the selected machines',
+      id: 'arrows',
+      label: 'Arrows',
+      Icon: ArrowRight,
+      onClick: () => st().toggleArrows(),
+      active: showArrows,
+      title: 'Show flow direction arrows on pipes (on / off)',
     },
+    {
+      id: 'power',
+      label: 'Cables',
+      Icon: Zap,
+      onClick: () => st().togglePower(),
+      active: showPower,
+      title: 'Show power cables (on / off); poles and transformers are always shown',
+    },
+    {
+      id: 'fit',
+      label: 'Fit view',
+      Icon: Maximize,
+      onClick: () => st().requestFit(),
+      title: 'Zoom to fit the whole layout (F)',
+    },
+  ];
+  // the selection and what can be done with it (only shown while something is selected)
+  const selCount = [
+    [selection.machines.size, 'machine'],
+    [selection.pipes.size, 'pipe'],
+    [selection.pieces.size, 'piece'],
+  ]
+    .filter(([n]) => (n as number) > 0)
+    .map(([n, w]) => `${n} ${w}${n === 1 ? '' : 's'}`)
+    .join(', ');
+  const allPinned =
+    !!doc &&
+    [
+      ...doc.machines.filter((m) => selection.machines.has(m.key)),
+      ...doc.pipes.filter((p) => selection.pipes.has(p.net)),
+      ...[...doc.valves, ...doc.passthroughs, ...doc.intersections, ...(doc.power ?? [])].filter(
+        (p) => selection.pieces.has(p.id),
+      ),
+    ].every((x) => x.pinned);
+  const selectionActions: Action[] = [
     {
       id: 'rotate',
       label: 'Rotate',
       Icon: RotateCw,
       onClick: () => doc && setDoc(rotateMachines(doc, ctx, selection.machines)),
       disabled: running || !selection.machines.size,
-      title: 'Rotate the selected machines (R)',
+      title: 'Rotate the selected machines a quarter turn (R)',
+    },
+    {
+      id: 'reroute',
+      label: 'Re-route',
+      Icon: RefreshCw,
+      onClick: reroute,
+      disabled: running,
+      title: 'Lay the selected pipes, and the pipes of the selected machines, again',
     },
     {
       id: 'pin',
-      label: 'Pin',
-      Icon: Pin,
+      label: allPinned ? 'Unpin' : 'Pin',
+      Icon: allPinned ? PinOff : Pin,
       onClick: () => doc && setDoc(togglePinned(doc, selection)),
-      disabled: running || !hasSelection,
-      title: 'Pin / unpin the selection: the generator keeps pinned items (P)',
+      disabled: running,
+      title: allPinned
+        ? 'Unpin: the generator may move these again (P)'
+        : 'Pin: the generator keeps these exactly where they are (P)',
     },
     {
       id: 'delete',
@@ -219,40 +362,32 @@ export function GameLayoutTray({ model }: { model: LayoutViewModel }) {
         setDoc(deleteItems(doc, selection));
         st().clearSelection();
       },
-      disabled: running || !hasSelection,
-      title: 'Delete the selection; machines go back to Unplaced (Del)',
+      disabled: running,
+      title: 'Remove the selection; machines go back to the Unplaced list (Del)',
     },
     {
-      id: 'flow',
-      label: FLOW_LABEL[flowView],
-      Icon: Waves,
-      onClick: () => st().setFlowView(NEXT_FLOW[flowView]),
-      title: 'Flows shown: as planned, with even splits, or as built (valves at their settings)',
-    },
-    {
-      id: 'arrows',
-      label: 'Arrows',
-      Icon: ArrowRight,
-      onClick: () => st().toggleArrows(),
-      active: showArrows,
-      title: 'Show flow direction arrows',
-    },
-    {
-      id: 'power',
-      label: 'Power',
-      Icon: Zap,
-      onClick: () => st().togglePower(),
-      active: showPower,
-      title: 'Show power cables (poles, transformers and the grid connection are always shown)',
-    },
-    {
-      id: 'fit',
-      label: 'Fit',
-      Icon: Maximize,
-      onClick: () => st().requestFit(),
-      title: 'Fit the layout in view (F)',
+      id: 'clear',
+      label: 'Deselect',
+      Icon: X,
+      onClick: () => st().clearSelection(),
+      title: 'Clear the selection (Esc)',
     },
   ];
+
+  const button = ({ id, label, Icon, onClick, disabled, active, title }: Action) => (
+    <button
+      key={id}
+      type="button"
+      className={styles['tray-button']}
+      data-active={active ? 'true' : 'false'}
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+    >
+      <Icon size={16} />
+      <span className={styles['tray-label']}>{label}</span>
+    </button>
+  );
 
   return (
     <div className={styles.tray}>
@@ -264,37 +399,44 @@ export function GameLayoutTray({ model }: { model: LayoutViewModel }) {
       </button>
       {!minimized && (
         <div className={styles['tray-rows']}>
+          {hasSelection && !running && (
+            <div className={styles['tray-selection']}>
+              <span className={styles['tray-selection-text']}>{selCount} selected</span>
+              {selectionActions.map(button)}
+            </div>
+          )}
           <div className={styles['tray-row']}>
-            {TOOLS.map(({ id, label, key, Icon }) => (
-              <button
-                key={id}
-                type="button"
-                className={styles['tray-button']}
-                data-active={tool === id ? 'true' : 'false'}
-                onClick={() => st().setTool(id)}
-                disabled={running}
-                title={`${label} (${key})`}
-              >
-                <Icon size={16} />
-                <span className={styles['tray-label']}>{label}</span>
-              </button>
+            {TOOL_GROUPS.map((g) => (
+              <div key={g.title} className={styles['tray-group']}>
+                <span className={styles['tray-group-title']}>{g.title}</span>
+                <div className={styles['tray-group-buttons']}>
+                  {g.tools.map(({ id, label, key, Icon, help }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={styles['tray-button']}
+                      data-active={tool === id ? 'true' : 'false'}
+                      onClick={() => st().setTool(id)}
+                      disabled={running}
+                      title={`${label} (${key}): ${help}`}
+                    >
+                      <Icon size={16} />
+                      <span className={styles['tray-label']}>{label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
           <div className={styles['tray-row']}>
-            {actions.map(({ id, label, Icon, onClick, disabled, active, title }) => (
-              <button
-                key={id}
-                type="button"
-                className={styles['tray-button']}
-                data-active={active ? 'true' : 'false'}
-                onClick={onClick}
-                disabled={disabled}
-                title={title}
-              >
-                <Icon size={16} />
-                <span className={styles['tray-label']}>{label}</span>
-              </button>
-            ))}
+            <div className={styles['tray-group']}>
+              <span className={styles['tray-group-title']}>Layout</span>
+              <div className={styles['tray-group-buttons']}>{layoutActions.map(button)}</div>
+            </div>
+            <div className={styles['tray-group']}>
+              <span className={styles['tray-group-title']}>View</span>
+              <div className={styles['tray-group-buttons']}>{viewActions.map(button)}</div>
+            </div>
           </div>
         </div>
       )}
