@@ -187,7 +187,7 @@ export function runLayout(
     stallLimit: options.tuning?.stallLimit,
     seams: options.tuning?.seams ?? true,
     hullCost: options.tuning?.hullCost ?? true,
-    notchWeight: options.tuning?.notchWeight,
+    notchWeight: options.tuning?.notchWeight ?? 0.1,
     log,
     shouldStop: cb.shouldStop,
     pinned: pinnedSpec(problem, options.pinned),

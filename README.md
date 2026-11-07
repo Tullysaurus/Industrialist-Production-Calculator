@@ -61,8 +61,8 @@ the flowchart changes (new machines appear as unplaced, removed ones are flagged
   them), then squeezes out the remaining gaps with seam carving: seams of empty tiles (and
   straight pipe runs) are cut out row by row, stepping around machines, with one-tile jogs in
   pipes where a seam crosses them. Empty space is counted inside the layout's orthogonal hull,
-  so an L- or T-shaped layout is not penalised for its notches; very elongated layouts get a
-  small penalty. Pinned machines and pipes form a fixed block the rest is laid out around. It
+  so an L- or T-shaped layout is only lightly penalised for its notches (long tails and very
+  elongated layouts cost a little extra, which keeps the shape compact). Pinned machines and pipes form a fixed block the rest is laid out around. It
   runs in a Web Worker, shows its best layout while it works and can be stopped at any time.
 - **Rules checked** (Problems list): overlaps, pipes under machines, unconnected ports, at most
   two normal pipes per tile, large pipes only crossing at a 2x2 intersection, normal pipes only
