@@ -22,6 +22,7 @@ import {
   Repeat2,
   UtilityPole,
   Waves,
+  WandSparkles,
   X,
   Zap,
 } from 'lucide-react';
@@ -36,7 +37,7 @@ import {
   withAttachedPipes,
 } from '../../gameLayout/docOps';
 import { emptyLayoutDoc, type GameLayoutDoc } from '../../gameLayout/docSchema';
-import { routeNetworks, unroutedNetworks } from '../../gameLayout/routeTools';
+import { routeNetworks, tidyNetworks, unroutedNetworks } from '../../gameLayout/routeTools';
 import { useFlowStore } from '../../stores/useFlowStore';
 import {
   useGameLayoutStore,
@@ -228,17 +229,39 @@ export function GameLayoutTray({ model }: { model: LayoutViewModel }) {
     );
   };
 
-  const reroute = () => {
+  /** The selected pipes and the pipes of the selected machines. */
+  const selectedNets = () => {
     const P = ctx.problem;
     const insts = new Set<number>();
     for (const k of selection.machines) {
       const g = ctx.instByKey.get(k);
       if (g !== undefined) insts.add(g);
     }
-    const nets = P.nets
+    return P.nets
       .map((n, i) => [n, i] as const)
       .filter(([n]) => selection.pipes.has(n.key) || n.terminals.some((t) => insts.has(t.inst)))
       .map(([, i]) => i);
+  };
+
+  const tidy = (onlySelected: boolean) => {
+    const nets = onlySelected ? selectedNets() : undefined;
+    if (onlySelected && !nets?.length) {
+      st().notify('Select pipes or machines to tidy');
+      return;
+    }
+    const base = evaluateDoc(ctx, doc ?? emptyLayoutDoc(), { analyse: false });
+    const res = tidyNetworks(base, nets, quantum, 5);
+    if (res.changed) setDoc(res.doc);
+    st().notify(
+      res.changed
+        ? `Tidied ${res.changed} pipe(s): shorter, fewer bends, closer to the machines`
+        : 'The pipes are already as tidy as this pass gets them',
+      res.changed ? 'success' : 'info',
+    );
+  };
+
+  const reroute = () => {
+    const nets = selectedNets();
     if (!nets.length) {
       st().notify('Select pipes or machines to re-route');
       return;
@@ -280,6 +303,15 @@ export function GameLayoutTray({ model }: { model: LayoutViewModel }) {
       onClick: autoRoute,
       disabled: running || !doc,
       title: 'Lay pipes for every connection between placed machines that has none yet',
+    },
+    {
+      id: 'tidy',
+      label: 'Tidy pipes',
+      Icon: WandSparkles,
+      onClick: () => tidy(false),
+      disabled: running || !doc?.pipes.length,
+      title:
+        'Lay every pipe again where that is shorter, with fewer bends and closer to the machines (pinned pipes stay; valves are laid again on moved pipes)',
     },
   ];
   const viewActions: Action[] = [
@@ -349,6 +381,14 @@ export function GameLayoutTray({ model }: { model: LayoutViewModel }) {
       onClick: reroute,
       disabled: running,
       title: 'Lay the selected pipes, and the pipes of the selected machines, again',
+    },
+    {
+      id: 'tidy-sel',
+      label: 'Tidy',
+      Icon: WandSparkles,
+      onClick: () => tidy(true),
+      disabled: running,
+      title: 'Tidy the selected pipes and the pipes of the selected machines',
     },
     {
       id: 'pin',

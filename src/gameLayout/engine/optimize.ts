@@ -20,7 +20,7 @@ import { Router, type RouterNet } from './router';
 import { key, kx, ky, Solution, type SolMachine } from './solution';
 import { now } from './clock';
 import { seamCompact } from './seams';
-import { planPower, POLE, powerConsumers } from './power';
+import { pieceTileKeys, planPower, POLE, powerConsumers } from './power';
 
 /** Free border around the placement so pipes can run around the outside. */
 const MARGIN = 4;
@@ -54,6 +54,8 @@ export interface OptimizeOptions {
   notchWeight?: number;
   /** Place power poles, transformers and the grid connection. */
   power?: boolean;
+  /** Tidy pass after routing: pipes hug machines, fewer bends (default on). */
+  tidy?: boolean;
   /** Tidiness: rows, flow order, ports facing corridors (traded against space). */
   grouping?: GroupingOptions;
 }
@@ -281,9 +283,45 @@ export function realize(
       for (const [cx, cy] of occupied(it.shape)) blocked[(m.y + cy) * gw + m.x + cx] = 1;
     });
   });
+  const rnets = routerNets(problem, instPos, gw, gh, blocked, quantum);
+  // pinned pipes: committed as they are and never ripped up
+  const pb = blocks[0] instanceof PinnedBlock ? blocks[0] : null;
+  const fixedRoutes: [number, Set<number>, number[]][] = [];
+  if (pb && pinned) {
+    const [ox, oy] = pb.offset(xs[0], ys[0]);
+    const g = (k: number) => (ky(k) + oy) * gw + kx(k) + ox;
+    for (const [ni, r] of pinned.pipes) {
+      rnets[ni].fixed = true;
+      const tree = new Set([...r.nodes].map(g));
+      const edges: number[] = [];
+      for (let i = 0; i < r.edges.length; i += 3)
+        edges.push(g(r.edges[i]), g(r.edges[i + 1]), r.edges[i + 2]);
+      fixedRoutes.push([ni, tree, edges]);
+    }
+  }
+  const router = new Router(gw, gh, blocked, rnets, { jump });
+  router.quantumNodes = quantum;
+  for (const [ni, tree, edges] of fixedRoutes) router.commit(ni, tree, edges);
+  // drop large anchors whose 2x2 footprint is blocked
+  for (const rn of rnets) {
+    if (!rn.large) continue;
+    rn.terms = rn.terms.map((t) => new Set([...t].filter((a) => !router.blockedL[a])));
+  }
+  return { gw, gh, machines, router };
+}
+
+/** Router nets for machines at grid positions (candidate attach tiles per terminal). */
+function routerNets(
+  problem: Problem,
+  instPos: Map<number, SolMachine>,
+  gw: number,
+  gh: number,
+  blocked: Uint8Array,
+  quantum: boolean,
+): RouterNet[] {
   const groupSize = new Map<string, number>();
   for (const n of problem.nets) groupSize.set(n.key, (groupSize.get(n.key) ?? 0) + 1);
-  const rnets: RouterNet[] = problem.nets.map((net) => ({
+  return problem.nets.map((net) => ({
     large: net.large,
     kind: net.kind,
     group: (groupSize.get(net.key) ?? 0) > 1 ? net.key : undefined,
@@ -309,30 +347,82 @@ export function realize(
       return cells;
     }),
   }));
-  // pinned pipes: committed as they are and never ripped up
-  const pb = blocks[0] instanceof PinnedBlock ? blocks[0] : null;
-  const fixedRoutes: [number, Set<number>, number[]][] = [];
-  if (pb && pinned) {
-    const [ox, oy] = pb.offset(xs[0], ys[0]);
-    const g = (k: number) => (ky(k) + oy) * gw + kx(k) + ox;
-    for (const [ni, r] of pinned.pipes) {
-      rnets[ni].fixed = true;
-      const tree = new Set([...r.nodes].map(g));
-      const edges: number[] = [];
-      for (let i = 0; i < r.edges.length; i += 3)
-        edges.push(g(r.edges[i]), g(r.edges[i + 1]), r.edges[i + 2]);
-      fixedRoutes.push([ni, tree, edges]);
+}
+
+/**
+ * Tidy pass on a finished (compacted) layout: the pipes are laid again one at a time around
+ * everything else, hugging machines and other pipes with fewer bends (seam carving leaves
+ * one-tile jogs). Returns the original when the result does not validate.
+ */
+export function tidySolution(
+  problem: Problem,
+  sol: Solution,
+  quantum: boolean,
+  deadline: number,
+  clock: () => number,
+  pinnedNets: Set<number> = new Set(),
+): { sol: Solution; changed: number } {
+  const M = 2;
+  const [bx0, by0, bx1, by1] = sol.bbox;
+  const ox = bx0 - M;
+  const oy = by0 - M;
+  const gw = bx1 - bx0 + 2 * M;
+  const gh = by1 - by0 + 2 * M;
+  const blocked = new Uint8Array(gw * gh);
+  const instPos = new Map<number, SolMachine>();
+  for (const m of sol.machines) {
+    const g = { ...m, x: m.x - ox, y: m.y - oy };
+    instPos.set(m.inst, g);
+    for (const [cx, cy] of occupied(m.shape)) blocked[(g.y + cy) * gw + g.x + cx] = 1;
+  }
+  const rnets = routerNets(problem, instPos, gw, gh, blocked, quantum);
+  const router = new Router(gw, gh, blocked, rnets, { jump: sol.jump });
+  router.quantumNodes = quantum;
+  for (const rn of rnets) {
+    if (rn.large)
+      rn.terms = rn.terms.map((t) => new Set([...t].filter((a) => !router.blockedL[a])));
+  }
+  const toG = (k: number) => (ky(k) - oy) * gw + (kx(k) - ox);
+  // pipes never run over power pieces
+  for (const p of sol.power) {
+    for (const t of pieceTileKeys(p)) {
+      const x = kx(t) - ox;
+      const y = ky(t) - oy;
+      if (x < 0 || y < 0 || x >= gw || y >= gh) continue;
+      router.hist[y * gw + x] = 1e4;
+      router.histL[y * gw + x] = 1e4;
     }
   }
-  const router = new Router(gw, gh, blocked, rnets, { jump });
-  router.quantumNodes = quantum;
-  for (const [ni, tree, edges] of fixedRoutes) router.commit(ni, tree, edges);
-  // drop large anchors whose 2x2 footprint is blocked
-  for (const rn of rnets) {
-    if (!rn.large) continue;
-    rn.terms = rn.terms.map((t) => new Set([...t].filter((a) => !router.blockedL[a])));
+  sol.netNodes.forEach((nodes, ni) => {
+    const edges: number[] = [];
+    const e = sol.netEdges[ni];
+    for (let i = 0; i < e.length; i += 3) edges.push(toG(e[i]), toG(e[i + 1]), e[i + 2]);
+    router.commit(ni, new Set([...nodes].map(toG)), edges);
+    if (pinnedNets.has(ni)) rnets[ni].fixed = true;
+  });
+  const changed = router.tidy(deadline, clock);
+  if (!changed) return { sol, changed: 0 };
+  const conv = (c: number) => key((c % gw) + ox, Math.floor(c / gw) + oy);
+  const out = new Solution(
+    problem,
+    sol.machines.map((m) => ({ ...m })),
+    router.tree.map((t) => new Set([...t].map(conv))),
+    router.edges.map((e) => {
+      const o: number[] = [];
+      for (let i = 0; i < e.length; i += 3) o.push(conv(e[i]), conv(e[i + 1]), e[i + 2]);
+      return o;
+    }),
+    sol.failed,
+    sol.jump,
+  );
+  out.pinnedRegion = sol.pinnedRegion;
+  out.setPower(sol.power, new Map(sol.powerAssign));
+  out.ok = sol.ok;
+  out.nOver = sol.nOver;
+  if (out.validate(3).length || out.overfull().length > sol.overfull().length) {
+    return { sol, changed: 0 };
   }
-  return { gw, gh, machines, router };
+  return { sol: out, changed };
 }
 
 function solutionFrom(problem: Problem, r: Realized, jump: number): Solution {
@@ -525,6 +615,12 @@ export function optimize(problem: Problem, o: OptimizeOptions): Solution {
     // a bounded share per attempt, so corridors can be widened / tightened several times
     const routeTime = Math.max(minAttemptTime, Math.min(left() * 0.3, 45));
     const ok = r.router.run(routeTime, 60, o.log, clock);
+    if (ok && o.tidy !== false) {
+      // tidy: pipes hug machines and each other, with fewer bends (frees corridor space)
+      const tt = clock();
+      const n = r.router.tidy(tt + Math.max(0.5, Math.min(4, left() * 0.05)), clock);
+      if (n) o.log(`  tidied ${n} pipe(s) in ${(clock() - tt).toFixed(1)}s`);
+    }
     const over = r.router.overusedCells();
     let sol = solutionFrom(problem, r, o.jump);
     if (blocks[0] instanceof PinnedBlock) {
@@ -576,6 +672,34 @@ export function optimize(problem: Problem, o: OptimizeOptions): Solution {
       sol = o.seams ? seamCompact(sol, o.log, deadline) : sol.compact(o.log, deadline);
       sol.ok = true;
       sol.nOver = 0;
+      if (o.tidy !== false) {
+        // compaction leaves jogs and gaps: tidy the pipes, then compact what that freed
+        const tt = clock();
+        const res = tidySolution(
+          problem,
+          sol,
+          !!o.quantum,
+          tt + Math.max(0.5, Math.min(4, left() * 0.05)),
+          clock,
+          new Set(o.pinned?.pipes.keys() ?? []),
+        );
+        if (res.changed) {
+          const area0 = sol.hull.empty;
+          const t = o.seams
+            ? seamCompact(res.sol, o.log, deadline)
+            : res.sol.compact(o.log, deadline);
+          // kept unless the outline grows: the space it frees inside is room for power etc.
+          const keep = t.width + t.height <= sol.width + sol.height;
+          if (keep) {
+            sol = t;
+            sol.ok = true;
+            sol.nOver = 0;
+          }
+          o.log(
+            `  tidied ${res.changed} pipe(s) after compaction: ${area0} -> ${t.hull.empty} empty tiles in the hull${keep ? '' : ' (not kept: wider outline)'}`,
+          );
+        }
+      }
       o.log(
         `  ROUTED. footprint ${raw} -> ${sol.area} tiles after compaction, ${sol.hull.empty} empty tiles in the hull`,
       );

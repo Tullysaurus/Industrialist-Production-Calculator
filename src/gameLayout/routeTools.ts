@@ -4,11 +4,13 @@
  * coordinates through a temporary grid around the layout.
  */
 import type { DocView } from './doc';
-import { passthroughTiles } from './doc';
+import { evaluateDoc, passthroughTiles, valveGeometry } from './doc';
+import { analyse, withJunctionValves } from './engine/finish';
 import type { DocPassthrough, GameLayoutDoc } from './docSchema';
 import { addIntersection, addPassthrough, pipeGraph, setPipe, type PipeGraph } from './docOps';
 import { accessCells, largeAnchor, occupied } from './engine/geometry';
 import { EDGE_LCROSS, EDGE_LNODE, lnodeEnd, Router, type RouterNet } from './engine/router';
+import { pieceTileKeys } from './engine/power';
 import { lcrossMid } from './engine/intersection';
 import { key, kx, ky } from './engine/solution';
 import { now } from './engine/clock';
@@ -102,6 +104,14 @@ export function buildEditorGrid(
   for (const v of view.valves) {
     for (const t of v.tiles) {
       if (inside(kx(t), ky(t))) router.hist[toGrid(t)] = 1e4;
+    }
+  }
+  // pipes never run over power pieces (left free: not machines, for the node rules)
+  for (const p of view.doc.power ?? []) {
+    for (const t of pieceTileKeys(p)) {
+      if (!inside(kx(t), ky(t))) continue;
+      router.hist[toGrid(t)] = 1e4;
+      router.histL[toGrid(t)] = 1e4;
     }
   }
   P.nets.forEach((_net, ni) => {
@@ -203,6 +213,70 @@ export function routeNetworks(
   }
   doc = addMissingPieces(doc, grid, new Set(todo));
   return { doc, routed: todo.length - failed.length, failed, conflictFree: ok };
+}
+
+/**
+ * Tidy the given pipes (all when `nets` is omitted): each is laid again with the rest fixed,
+ * hugging machines and other pipes with fewer bends, and kept only when that is better and
+ * adds no conflict. Pinned pipes stay. Passthroughs and intersections (other than pinned
+ * ones) are laid again to match.
+ */
+export function tidyNetworks(
+  view: DocView,
+  nets?: number[],
+  quantum = false,
+  timeLimit = 3,
+): { doc: GameLayoutDoc; changed: number } {
+  const P = view.ctx.problem;
+  const pinned = new Set(view.doc.pipes.filter((p) => p.pinned).map((p) => p.net));
+  const todo = (nets ?? P.nets.map((_n, i) => i)).filter(
+    (ni) => !pinned.has(P.nets[ni].key) && view.sol.netNodes[ni].size > 0,
+  );
+  if (!todo.length) return { doc: view.doc, changed: 0 };
+  const grid = buildEditorGrid(view, [], quantum);
+  const clock = () => now() / 1000;
+  const before = todo.map((ni) => JSON.stringify([...grid.router.edges[ni]]));
+  const changed = grid.router.tidy(clock() + timeLimit, clock, todo);
+  if (!changed) return { doc: view.doc, changed: 0 };
+  let doc: GameLayoutDoc = {
+    ...view.doc,
+    passthroughs: view.doc.passthroughs.filter((p) => p.pinned),
+    intersections: view.doc.intersections.filter((p) => p.pinned),
+  };
+  const moved = new Set<number>();
+  todo.forEach((ni, k) => {
+    if (JSON.stringify([...grid.router.edges[ni]]) === before[k]) return;
+    moved.add(ni);
+    const net = P.nets[ni];
+    doc = setPipe(doc, net.key, net.large, net.productName, graphOf(grid, ni));
+  });
+  doc = addMissingPieces(doc, grid, new Set(P.nets.map((_n, i) => i)));
+  // valves on pipes that moved: taken off and laid again on the new route (as the generator does)
+  const old = new Map<number, number>();
+  for (const ni of moved) for (const c of view.sol.cells[ni]) old.set(c, ni);
+  const valved = new Set<number>();
+  const kept = doc.valves.filter((v) => {
+    const g = valveGeometry(v);
+    const ni = old.get(key(g.m[0], g.m[1]));
+    if (v.pinned || ni === undefined) return true;
+    valved.add(ni);
+    return false;
+  });
+  if (valved.size) {
+    doc = { ...doc, valves: kept };
+    const sol = evaluateDoc(view.ctx, doc, { analyse: false }).sol;
+    const an = analyse(P, sol, true);
+    // valve placement may straighten a pipe locally for its valve: keep those routes
+    for (const ni of valved) {
+      const net = P.nets[ni];
+      doc = setPipe(doc, net.key, net.large, net.productName, {
+        nodes: new Set(sol.netNodes[ni]),
+        edges: [...sol.netEdges[ni]],
+      });
+    }
+    doc = withJunctionValves(doc, an, valved);
+  }
+  return { doc, changed };
 }
 
 /** Networks with placed machines on both ends that have no complete route. */

@@ -4,6 +4,7 @@
 //          [--no-valves] [--seed=N] [--verbose] [--pin=N]   (pin N machines and run again)
 //          [--no-seams] [--no-hull]   (old row/column compaction, bounding-box objective)
 //          [--no-power] [--rows] [--facing] [--flow] [--tidy=0.5]   (power, grouping) [--quantum]
+//          [--no-tidy]   (no pipe tidy pass)
 import fs from 'node:fs';
 import { createServer } from 'vite';
 
@@ -77,6 +78,7 @@ try {
         },
         pinned,
         tuning: {
+          tidy: !flags.includes('--no-tidy'),
           slack: flag('slack', undefined),
           stallLimit: flag('stall', undefined),
           useModules: flags.includes('--no-modules') ? false : undefined,

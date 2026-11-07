@@ -8,15 +8,16 @@
  */
 import { Analysis } from './flows';
 import { buildProblem, type Problem } from './problem';
-import { docFromSolution, moveItems } from '../docOps';
+import { docFromSolution, moveItems, newPieceId } from '../docOps';
 import type { GameLayoutDoc } from '../docSchema';
-import { valveGeometry } from '../doc';
 import type { Solution } from './solution';
 import { optimize, type PinnedSpec } from './optimize';
-import { placeValves } from './valves';
+import { analyse, withJunctionValves } from './finish';
+import { tidyNetworks } from '../routeTools';
+import { buildContext, evaluateDoc, instanceKey, type DocView, type LayoutContext } from '../doc';
 import { now } from './clock';
-import { pieceTiles as powerTiles } from './power';
-import { key, kx, ky } from './solution';
+import { pieceTiles as powerTiles, planPower } from './power';
+import { key } from './solution';
 import type { LayoutInput, LayoutOptions, LayoutPhase, LayoutRunResult } from './types';
 
 export interface RunCallbacks {
@@ -28,16 +29,6 @@ export interface RunCallbacks {
 }
 
 /** Even-split check plus valves on routed junctions where they are still needed. */
-export function analyse(problem: Problem, sol: Solution, valves: boolean): Analysis {
-  const first = new Analysis(problem, sol).analyse();
-  if (!valves || !first.valveNets.size) {
-    first.placed = [];
-    first.unplaced = [];
-    return first;
-  }
-  const [placed, unplaced] = placeValves(problem, sol, first);
-  return new Analysis(problem, sol).analyse(placed, first.valveNets, unplaced);
-}
 
 /** Machine groups within this fraction of their plan do not get valve manifolds. */
 const VALVE_TOLERANCE = 0.02;
@@ -91,6 +82,74 @@ export function pinnedSpec(
 }
 
 /** Document from a generator solution, moved back onto the pinned machines' coordinates. */
+
+/**
+ * Tidy the finished document's pipes (valve placement leaves detours and jogs); valves on
+ * pipes that move are laid again. Kept only when it adds no problem and no size.
+ */
+function finalTidy(
+  problem: Problem,
+  doc: GameLayoutDoc,
+  quantum: boolean,
+  log: (m: string) => void,
+): GameLayoutDoc {
+  const ctx = buildContext(problem);
+  const v0 = evaluateDoc(ctx, doc, { analyse: false });
+  const res = tidyNetworks(v0, undefined, quantum, 4);
+  if (!res.changed) return doc;
+  const v1 = evaluateDoc(ctx, res.doc, { analyse: false });
+  const errs = (v: DocView) => v.problems.filter((p) => p.severity === 'error').length;
+  const perimeter = (v: DocView) => v.sol.bbox[2] - v.sol.bbox[0] + v.sol.bbox[3] - v.sol.bbox[1];
+  const tiles = (v: DocView) => v.sol.cells.reduce((n, c) => n + c.size, 0);
+  if (errs(v1) > errs(v0) || perimeter(v1) > perimeter(v0)) {
+    log('Pipe tidy kept out: it would add problems or widen the outline');
+    return doc;
+  }
+  log(`Tidied ${res.changed} pipe(s): ${tiles(v0)} -> ${tiles(v1)} pipe tiles`);
+  return powerInFreedSpace(problem, ctx, res.doc, v1, log);
+}
+
+const POWER_CODES = new Set(['unpowered', 'power-overload', 'pole-unconnected', 'no-grid']);
+
+/**
+ * Space the tidy freed inside the layout, used for power: when machines are still unpowered
+ * or poles overloaded, poles are planned again around the kept ones (kept when that leaves
+ * fewer power problems and the outline no wider).
+ */
+function powerInFreedSpace(
+  problem: Problem,
+  ctx: LayoutContext,
+  doc: GameLayoutDoc,
+  view: DocView,
+  log: (m: string) => void,
+): GameLayoutDoc {
+  const count = (v: DocView) => v.problems.filter((p) => POWER_CODES.has(p.code)).length;
+  const before = count(view);
+  if (!before || !doc.power?.length) return doc;
+  const plan = planPower(problem, view.sol, doc.power);
+  const known = new Set(doc.power.map((p) => p.id));
+  const ids = new Map(plan.pieces.map((p) => [p.id, known.has(p.id) ? p.id : newPieceId(p.kind)]));
+  const power = plan.pieces.map((p) => ({
+    ...p,
+    id: ids.get(p.id)!,
+    ...(p.feed !== undefined && ids.has(p.feed) ? { feed: ids.get(p.feed)! } : {}),
+  }));
+  const powerFeeds: Record<string, string> = {};
+  for (const [ck, pid] of plan.assign) {
+    const [inst, n] = ck.split('|').map(Number);
+    const id = ids.get(pid);
+    if (id !== undefined) powerFeeds[`${instanceKey(problem, inst)}|${n}`] = id;
+  }
+  const next = { ...doc, power, powerFeeds };
+  const v2 = evaluateDoc(ctx, next, { analyse: false });
+  const per = (v: DocView) => v.sol.bbox[2] - v.sol.bbox[0] + v.sol.bbox[3] - v.sol.bbox[1];
+  if (count(v2) >= before || per(v2) > per(view)) return doc;
+  log(
+    `Power planned again in the space the tidy freed: ${before} -> ${count(v2)} power problem(s)`,
+  );
+  return next;
+}
+
 function toDoc(
   problem: Problem,
   sol: Solution,
@@ -98,29 +157,7 @@ function toDoc(
   analysis: Analysis | null,
 ): GameLayoutDoc {
   let doc = docFromSolution(problem, sol, pinned);
-  // junction valves the analysis laid on routed pipes become valve pieces too
-  for (const v of analysis?.placed ?? []) {
-    const [A, M, E] = v.tiles;
-    const j = analysis!.nets[v.net].junctions.get(M);
-    for (let r = 0; r < 4; r++) {
-      const cand = {
-        x: Math.min(...[A, M, E].map(kx)),
-        y: Math.min(...[A, M, E].map(ky)),
-        rot: r,
-      };
-      const g = valveGeometry(cand);
-      if (key(...g.a) === A && key(...g.m) === M && key(...g.e) === E) {
-        doc = {
-          ...doc,
-          valves: [
-            ...doc.valves,
-            { id: `jv-${M}`, ...cand, sidePct: Math.round((j?.valve?.sidePct ?? 50) * 10) / 10 },
-          ],
-        };
-        break;
-      }
-    }
-  }
+  if (analysis) doc = withJunctionValves(doc, analysis);
   if (!pinned) return doc;
   const anchor = pinned.machines.find((m) => m.pinned && doc.machines.some((d) => d.key === m.key));
   if (anchor) {
@@ -207,6 +244,7 @@ export function runLayout(
     grouping: options.grouping,
     hullCost: options.tuning?.hullCost ?? true,
     notchWeight: options.tuning?.notchWeight ?? 0.1,
+    tidy: options.tuning?.tidy ?? true,
     log,
     shouldStop: cb.shouldStop,
     pinned: pinnedSpec(problem, options.pinned),
@@ -290,7 +328,8 @@ export function runLayout(
   log(
     `Footprint ${sol.width} x ${sol.height} = ${sol.area.toLocaleString('en-US')} tiles, ${sol.hull.empty.toLocaleString('en-US')} empty tiles inside the outline (${sol.ok ? 'fully routed' : 'NOT fully routed'})`,
   );
-  const doc = toDoc(problem, sol, options.pinned, options.valves ? analysis : null);
+  let doc = toDoc(problem, sol, options.pinned, options.valves ? analysis : null);
+  if (options.tuning?.tidy ?? true) doc = finalTidy(problem, doc, !!options.quantumNodes, log);
   const result = { doc, summary: summary(sol, doc, elapsed(), [...lines]) };
   cb.result?.(result, true);
   cb.progress?.('done', 'Done', sol);
@@ -298,3 +337,4 @@ export function runLayout(
 }
 
 export * from './types';
+export { analyse, withJunctionValves };

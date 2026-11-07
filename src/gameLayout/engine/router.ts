@@ -494,7 +494,43 @@ export class Router {
     const s = this.occS[c];
     const l = this.occL[c];
     const over = (s >= 2 ? s - 1 : 0) + l * 2 + this.occX[c];
-    return (1 + this.hist[c]) * (1 + this.pres * over) + this.shareCost * (s + l);
+    return (
+      (1 + this.hist[c]) * (1 + this.pres * over) +
+      this.shareCost * (s + l) +
+      (this.hugWeight && !this.hugged(c) ? this.hugWeight : 0)
+    );
+  }
+
+  /** Extra cost of a pipe tile with nothing next to it (tidy pass: pipes hug machines). */
+  hugWeight = 0;
+
+  /** A machine or another pipe right next to tile c. */
+  private hugged(c: number): boolean {
+    const g = this.gw;
+    for (const n of [c - 1, c + 1, c - g, c + g]) {
+      if (n < 0 || n >= this.N) continue;
+      if (this.blocked[n] || this.occS[n] || this.occL[n]) return true;
+    }
+    return false;
+  }
+
+  /** A machine or another pipe right next to the 2x2 at a. */
+  private huggedL(a: number): boolean {
+    const g = this.gw;
+    for (const n of [
+      a - 1,
+      a - 1 + g,
+      a + 2,
+      a + 2 + g,
+      a - g,
+      a - g + 1,
+      a + 2 * g,
+      a + 2 * g + 1,
+    ]) {
+      if (n < 0 || n >= this.N) continue;
+      if (this.blocked[n] || this.occS[n] || this.occL[n]) return true;
+    }
+    return false;
   }
 
   private largeCost(a: number, own: number): number {
@@ -510,6 +546,7 @@ export class Router {
         (1 + this.histL[c] + this.reserve[c] * 60) * (1 + this.pres * over) +
         this.shareCost * (s + l);
     }
+    if (this.hugWeight && !this.huggedL(a)) tot += 2 * this.hugWeight;
     return tot * 0.5;
   }
 
@@ -1293,6 +1330,102 @@ export class Router {
     if (!all.length) return 0;
     const [x0, y0, x1, y1] = this.bbox(all, 0);
     return x1 - x0 + (y1 - y0);
+  }
+
+  // ------------------------------------------------------------------ tidy
+
+  /**
+   * How untidy net ni is: its length, bends (weighted), tiles with nothing next to them
+   * (weighted; pipes should hug machines and each other, which leaves the free space in one
+   * piece for compaction) and the pieces it needs.
+   */
+  tidyScore(ni: number, bend: number, hug: number): number {
+    const large = this.nets[ni].large;
+    const own = this.cells[ni];
+    const g = this.gw;
+    const taken = (t: number) =>
+      t >= 0 &&
+      t < this.N &&
+      (this.blocked[t] === 1 || this.occS[t] + this.occL[t] - (own.has(t) ? 1 : 0) > 0);
+    let exposed = 0;
+    for (const c of this.tree[ni]) {
+      const ring = large
+        ? [c - 1, c - 1 + g, c + 2, c + 2 + g, c - g, c - g + 1, c + 2 * g, c + 2 * g + 1]
+        : [c - 1, c + 1, c - g, c + g];
+      if (!ring.some(taken)) exposed++;
+    }
+    // bends: tree nodes with two segments at right angles
+    const dirs = new Map<number, number[]>();
+    const e = this.edges[ni];
+    let pieces = 0;
+    for (let i = 0; i < e.length; i += 3) {
+      const a = e[i];
+      const b = e[i + 1];
+      if (e[i + 2] !== EDGE_STEP) pieces++;
+      const horizontal = Math.abs(b - a) < g ? 1 : 0;
+      for (const n of [a, b]) {
+        const l = dirs.get(n);
+        if (l) l.push(horizontal);
+        else dirs.set(n, [horizontal]);
+      }
+    }
+    let bends = 0;
+    for (const l of dirs.values()) if (l.length === 2 && l[0] !== l[1]) bends++;
+    return this.tree[ni].size + bend * bends + hug * exposed + 2 * pieces;
+  }
+
+  /**
+   * Tidy pass on a conflict-free routing: re-lays each pipe (others fixed) preferring tiles
+   * next to machines or other pipes and fewer bends, and keeps the new route only when it
+   * scores better and adds no conflict. Pinned pipes stay. Returns how many pipes changed.
+   */
+  tidy(deadline: number, clock: () => number, nets?: number[], bend = 2, hug = 0.6): number {
+    const order = (nets ?? this.nets.map((_n, i) => i)).filter(
+      (ni) => !this.nets[ni].fixed && this.tree[ni].size > 0,
+    );
+    // large pipes first: normal pipes then hug them
+    order.sort((a, b) => Number(this.nets[b].large) - Number(this.nets[a].large));
+    const saved = { pres: this.pres, bendCost: this.bendCost, hug: this.hugWeight };
+    this.pres = 60;
+    this.bendCost = bend;
+    this.hugWeight = hug;
+    let baseOver = this.overusedCells().length;
+    let changed = 0;
+    for (let pass = 0; pass < 3; pass++) {
+      let any = false;
+      for (const ni of order) {
+        if (clock() > deadline) break;
+        const tree = new Set(this.tree[ni]);
+        const edges = [...this.edges[ni]];
+        const before = this.tidyScore(ni, bend, hug);
+        this.ripup(ni);
+        let ok = this.routeNet(ni);
+        if (ok) for (const c of this.cells[ni]) if (this.overAmount(c) > 0) ok = false;
+        if (ok) ok = this.tidyScore(ni, bend, hug) < before - 1e-6;
+        let checked = false;
+        if (ok) {
+          checked = true;
+          const over = this.overusedCells().length;
+          ok = over <= baseOver;
+          if (ok) baseOver = over;
+        }
+        if (ok) {
+          changed++;
+          any = true;
+        } else {
+          this.ripup(ni);
+          this.commit(ni, tree, edges);
+          // passthrough / intersection checks of the rejected route are stale
+          if (checked) this.overusedCells();
+        }
+      }
+      if (!any || clock() > deadline) break;
+    }
+    this.pres = saved.pres;
+    this.bendCost = saved.bendCost;
+    this.hugWeight = saved.hug;
+    this.overusedCells();
+    return changed;
   }
 
   /** Why a tile is in conflict (for diagnostics). */

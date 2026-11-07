@@ -101,6 +101,8 @@ export interface LayoutOptions {
     seams?: boolean;
     hullCost?: boolean;
     notchWeight?: number;
+    /** Tidy pass on the pipes after routing (default on). */
+    tidy?: boolean;
   };
 }
 
