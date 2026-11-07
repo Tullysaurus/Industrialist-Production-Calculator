@@ -242,8 +242,10 @@ export class Ledger {
     let cur = i;
     let nd = -1;
     let a = amount;
+    let child = -1;
     if (hv && this.pieces[i].kind === 'transformer') {
       if (this.draw(i) + a > TRANSFORMER.maxInput + 1e-6) return false;
+      child = i;
       nd = this.feedNode[i];
       cur = this.parent[i];
     }
@@ -254,9 +256,7 @@ export class Ledger {
           // a machine's cable may draw from several nodes of its pole
           const room = this.nodeUse[cur].reduce((r, u) => r + Math.max(0, sp.rating - u), 0);
           if (room + 1e-6 < a) return false;
-        } else if (nd < 0) {
-          if (!this.nodeUse[cur].some((u) => u + a <= sp.rating + 1e-6)) return false;
-        } else if (this.nodeUse[cur][nd] + a > sp.rating + 1e-6) {
+        } else if (!this.nodeFits(cur, nd, a) && !this.pack(cur, child, a)) {
           return false;
         }
       }
@@ -268,10 +268,64 @@ export class Ledger {
         }
         a /= 1 - TRANSFORMER.loss;
       }
+      child = cur;
       nd = this.feedNode[cur];
       cur = this.parent[cur];
     }
     return true;
+  }
+
+  /** Does `a` more fit on node nd of pole cur (nd < 0: on any one node)? */
+  private nodeFits(cur: number, nd: number, a: number): boolean {
+    const r = this.spec(cur)!.rating + 1e-6;
+    const use = this.nodeUse[cur];
+    return nd < 0 ? use.some((u) => u + a <= r) : use[nd] + a <= r;
+  }
+
+  /**
+   * Cables of pole cur laid out again, biggest first each on the node with the most room, with
+   * `a` more through `child` (cables to other pieces cannot be split, machines' cables can):
+   * the player picks the nodes, so the check should not depend on the order loads were added.
+   * Returns the new node of every cable and each node's use, or null when they do not fit.
+   * `counted`: the loads already include `a` (during commit).
+   */
+  private pack(
+    cur: number,
+    child: number,
+    a: number,
+    counted = false,
+  ): { use: number[]; feed: [number, number][] } | null {
+    const sp = this.spec(cur);
+    if (!sp) return null;
+    const items: [number, number][] = [];
+    let cables = 0;
+    for (let j = 0; j < this.pieces.length; j++) {
+      if (this.parent[j] !== cur || j === cur) continue;
+      const d = this.feedNode[j] >= 0 || (counted && j === child) ? this.draw(j) : 0;
+      cables += d;
+      const amt = j === child && !counted ? (this.feedNode[j] >= 0 ? d : 0) + a : d;
+      if (amt > 0) items.push([j, amt]);
+    }
+    // machines straight on this pole (can spread over nodes)
+    let div = this.load[cur] - cables + (child < 0 && !counted ? a : 0);
+    items.sort((p, q) => q[1] - p[1]);
+    const use = new Array<number>(sp.nodes).fill(0);
+    const feed: [number, number][] = [];
+    for (const [j, amt] of items) {
+      let best = 0;
+      for (let k = 1; k < use.length; k++) if (use[k] < use[best]) best = k;
+      if (use[best] + amt > sp.rating + 1e-6) return null;
+      use[best] += amt;
+      feed.push([j, best]);
+    }
+    const room = use.reduce((r, u) => r + Math.max(0, sp.rating - u), 0);
+    if (room + 1e-6 < div) return null;
+    for (let k = 0; k < use.length && div > 1e-12; k++) {
+      const take = Math.min(div, Math.max(0, sp.rating - use[k]));
+      use[k] += take;
+      div -= take;
+    }
+    return { use, feed };
   }
 
   /** Draws `amount` through piece i (forced: also when it does not fit). */
@@ -307,13 +361,20 @@ export class Ledger {
           if (left > 1e-9) use[order[0]] += left;
         }
       } else if (sp) {
-        if (nd < 0) {
-          const use = this.nodeUse[cur];
-          nd = use.findIndex((u) => u + a <= sp.rating + 1e-6);
-          if (nd < 0) nd = use.indexOf(Math.min(...use));
-          if (child >= 0) this.feedNode[child] = nd;
+        const packed = this.nodeFits(cur, nd, a) ? null : this.pack(cur, child, a, true);
+        if (packed) {
+          // laid out again so it fits
+          this.nodeUse[cur] = packed.use;
+          for (const [j, k] of packed.feed) this.feedNode[j] = k;
+        } else {
+          if (nd < 0) {
+            const use = this.nodeUse[cur];
+            nd = use.findIndex((u) => u + a <= sp.rating + 1e-6);
+            if (nd < 0) nd = use.indexOf(Math.min(...use));
+            if (child >= 0) this.feedNode[child] = nd;
+          }
+          this.nodeUse[cur][nd] += a;
         }
-        this.nodeUse[cur][nd] += a;
       }
       if (this.pieces[cur].kind === 'transformer') a /= 1 - TRANSFORMER.loss;
       child = cur;
@@ -330,8 +391,10 @@ export class Ledger {
     let cur = i;
     let nd = -1;
     let a = amount;
+    let child = -1;
     if (hv && this.pieces[i].kind === 'transformer') {
       if (this.draw(i) + a > TRANSFORMER.maxInput + 1e-6) return i;
+      child = i;
       nd = this.feedNode[i];
       cur = this.parent[i];
     }
@@ -341,9 +404,7 @@ export class Ledger {
         if (cur === i) {
           const room = this.nodeUse[cur].reduce((r, u) => r + Math.max(0, sp.rating - u), 0);
           if (room + 1e-6 < a) return cur;
-        } else if (nd < 0) {
-          if (!this.nodeUse[cur].some((u) => u + a <= sp.rating + 1e-6)) return cur;
-        } else if (this.nodeUse[cur][nd] + a > sp.rating + 1e-6) {
+        } else if (!this.nodeFits(cur, nd, a) && !this.pack(cur, child, a)) {
           return cur;
         }
       }
@@ -352,6 +413,7 @@ export class Ledger {
         if (this.draw(cur) + a / (1 - TRANSFORMER.loss) > TRANSFORMER.maxInput + 1e-6) return cur;
         a /= 1 - TRANSFORMER.loss;
       }
+      child = cur;
       nd = this.feedNode[cur];
       cur = this.parent[cur];
     }
