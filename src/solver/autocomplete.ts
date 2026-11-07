@@ -1,5 +1,5 @@
 import type { Edge } from '@xyflow/react';
-import { getProduct, getRecipe, resolveActiveRecipe } from '../data/lookup';
+import { getMachineName, getProduct, getRecipe, resolveActiveRecipe } from '../data/lookup';
 import { getSpecialRecipe } from '../data/registry';
 import type { Recipe } from '../types/data';
 import { isRecipeNode, type CanvasNode, type RecipeNodeType } from '../types/nodes';
@@ -214,6 +214,8 @@ export interface AutocompletePassDebugInfo {
   removedEdgeEndpoints: string[];
   temperatureConverged: boolean;
   temperaturePropagationIterations?: number;
+  /** Temperature settings that kept changing when they did not settle (human readable). */
+  unsettledTemperatures?: string[];
   changed: boolean;
 }
 
@@ -937,6 +939,48 @@ function getCandidateRequiredOutputRates(
   return ratesByCandidate;
 }
 
+/** "Steam Condenser: Steam Temp 91.4°C <-> 198°C" lines for settings that did not settle. */
+function describeUnsettledTemperatures(
+  unsettled: { nodeId: string; setting: string; from: number; to: number }[] | undefined,
+  lookupNode: (nodeId: string) => { recipeId: string; name: string } | undefined,
+): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  // biggest swings first: those point at the machine that switches on and off
+  const sorted = [...(unsettled ?? [])].sort(
+    (a, b) => Math.abs(b.to - b.from) - Math.abs(a.to - a.from),
+  );
+  for (const u of sorted) {
+    const node = lookupNode(u.nodeId);
+    if (!node) continue;
+    const sr = getSpecialRecipe(node.recipeId);
+    const label =
+      (sr?.settings as Record<string, { label?: string }> | undefined)?.[u.setting]?.label ??
+      u.setting;
+    const machineId = sr?.machine_id ?? getRecipe(node.recipeId)?.machine_id;
+    const machine = machineId ? getMachineName(machineId) : node.name;
+    const key = `${machine}|${label}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const t = (v: number) => `${Math.round(v * 10) / 10}°C`;
+    out.push(`${machine}: ${label} ${t(u.from)} <-> ${t(u.to)}`);
+  }
+  return out;
+}
+
+/** Error text for a temperature loop that did not settle, naming what keeps flipping. */
+function unsettledTemperatureError(base: string, details: string[] | undefined): string {
+  if (!details?.length) return base;
+  return (
+    `${base} These keep switching back and forth: ${details.slice(0, 4).join('; ')}` +
+    `${details.length > 4 ? ` (and ${details.length - 4} more)` : ''}. ` +
+    'A machine in the loop usually shuts off at the temperature the loop reaches (for example ' +
+    'a steam condenser whose coolant comes back too hot, or a power plant that trips), which ' +
+    'turns the loop off, and the default temperatures turn it back on. Add cooling or more ' +
+    'coolant to that loop, or set those temperatures by hand, then try again.'
+  );
+}
+
 function refreshSelectedCandidateRecipes(
   model: AutocompleteModel,
   globalSettings: GlobalSettings,
@@ -1097,6 +1141,15 @@ function refreshSelectedCandidateRecipes(
       removedEdgeEndpoints: removedEdges.sample,
       temperatureConverged: snapshot.temperatureDiagnostics.converged,
       temperaturePropagationIterations: snapshot.temperatureDiagnostics.propagation.iterationsRun,
+      unsettledTemperatures: describeUnsettledTemperatures(
+        snapshot.temperatureDiagnostics.unsettled,
+        (nodeId) => {
+          const candidate = selectedCandidates.find((c) => c.node.id === nodeId);
+          return candidate
+            ? { recipeId: candidate.node.data.recipeId, name: candidate.recipe.name }
+            : undefined;
+        },
+      ),
       changed,
     },
   };
@@ -1906,7 +1959,20 @@ function materializePlan(
     globalSettings as unknown as Record<string, unknown>,
   );
   if (!verification.temperatureDiagnostics.converged) {
-    return { error: 'Temperature and recipe settings did not settle during graph verification.' };
+    return {
+      error: unsettledTemperatureError(
+        'Temperature and recipe settings did not settle during graph verification.',
+        describeUnsettledTemperatures(verification.temperatureDiagnostics.unsettled, (nodeId) => {
+          const node = recipeNodes.find((n) => n.id === nodeId);
+          return node
+            ? {
+                recipeId: node.data.recipeId,
+                name: verification.nodeRecipes[nodeId]?.name ?? node.data.recipeId,
+              }
+            : undefined;
+        }),
+      ),
+    };
   }
 
   const materializedEndpointKeys = new Set(
@@ -2190,7 +2256,10 @@ async function recoverAutocompleteCycle(
       if (!refresh.debugInfo.temperatureConverged) {
         attempts.push({
           ...failureBase,
-          error: 'Cycle branch recipe temperatures did not settle after a fresh solve.',
+          error: unsettledTemperatureError(
+            'Cycle branch recipe temperatures did not settle after a fresh solve.',
+            refresh.debugInfo.unsettledTemperatures,
+          ),
         });
         break;
       }
@@ -2506,7 +2575,10 @@ async function runAutocomplete(
     if (!refreshResult.debugInfo.temperatureConverged) {
       return {
         feasible: false,
-        error: 'Temperature and recipe settings did not settle within the propagation limits.',
+        error: unsettledTemperatureError(
+          'Temperature and recipe settings did not settle within the propagation limits.',
+          refreshResult.debugInfo.unsettledTemperatures,
+        ),
         telemetry: finalTelemetry,
         debugTrace: coupledPassDebugTrace,
       };

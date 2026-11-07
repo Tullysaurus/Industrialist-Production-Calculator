@@ -57,6 +57,28 @@ function areSettingsEquivalent(a: unknown, b: unknown): boolean {
   return a === b;
 }
 
+/** Temperature settings whose value differs between two passes' overrides. */
+function getOverrideChanges(
+  prev: SettingsOverrides | undefined,
+  next: SettingsOverrides | undefined,
+): NonNullable<TemperatureDiagnostics['unsettled']> {
+  const out: NonNullable<TemperatureDiagnostics['unsettled']> = [];
+  const ids = new Set([...Object.keys(prev ?? {}), ...Object.keys(next ?? {})]);
+  for (const nodeId of ids) {
+    const p = prev?.[nodeId] ?? {};
+    const n = next?.[nodeId] ?? {};
+    for (const setting of new Set([...Object.keys(p), ...Object.keys(n)])) {
+      if (areSettingsEquivalent(p[setting], n[setting])) continue;
+      const from = p[setting];
+      const to = n[setting];
+      if (typeof from === 'number' && typeof to === 'number') {
+        out.push({ nodeId, setting, from, to });
+      }
+    }
+  }
+  return out;
+}
+
 function areRatesEquivalent(a: number, b: number): boolean {
   if (!Number.isFinite(a) || !Number.isFinite(b)) return a === b;
   const normalizedA = normalizeSolverRate(a);
@@ -292,6 +314,7 @@ export function solveFlowPipeline(
   let temperaturePropagationPassesRun = 0;
   let totalTemperatureIterationsRun = 0;
   let temperatureCouplingPassesRun = 0;
+  let lastOverrideChanges: NonNullable<TemperatureDiagnostics['unsettled']> = [];
 
   for (let pass = 0; pass < MAX_TEMPERATURE_COUPLED_PASSES; pass++) {
     temperatureCouplingPassesRun += 1;
@@ -318,6 +341,7 @@ export function solveFlowPipeline(
       break;
     }
 
+    lastOverrideChanges = getOverrideChanges(activeOverrides, nextOverrides);
     activeOverrides = nextOverrides;
     needsFinalResync = pass === MAX_TEMPERATURE_COUPLED_PASSES - 1;
   }
@@ -346,6 +370,9 @@ export function solveFlowPipeline(
       ? passResult.settingsOverrides
       : undefined;
     temperatureCouplingConverged = areOverridesEquivalent(activeOverrides, nextOverrides);
+    if (!temperatureCouplingConverged) {
+      lastOverrideChanges = getOverrideChanges(activeOverrides, nextOverrides);
+    }
   }
 
   const propagation = temperaturePropagation ?? {
@@ -375,6 +402,7 @@ export function solveFlowPipeline(
         !temperatureCouplingConverged &&
         temperatureCouplingPassesRun >= MAX_TEMPERATURE_COUPLED_PASSES,
     },
+    ...(temperatureCouplingConverged ? {} : { unsettled: lastOverrideChanges }),
   };
 
   finalResult.resolvedProducts = computeResolvedProducts(nodesById, edges, globalSettings);

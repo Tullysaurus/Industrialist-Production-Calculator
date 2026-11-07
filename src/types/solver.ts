@@ -32,6 +32,12 @@ export interface TemperatureDiagnostics {
     passLimit: number;
     limitReached: boolean;
   };
+  /**
+   * When the coupling did not settle: the temperature settings that still changed in the last
+   * pass (typically flipping between two values because a machine shuts off at the
+   * temperature the loop reaches).
+   */
+  unsettled?: { nodeId: string; setting: string; from: number; to: number }[];
 }
 
 export interface SolverPort {
