@@ -9,6 +9,7 @@ import { resolveOptimizationSettings } from '../utils/optimizationMetrics';
 import {
   areNearlyEqual,
   areRatesEquivalent,
+  hasMeaningfulDeficit,
   isMachineCountNumericallyZero,
   isPositiveSolverFlow,
   normalizeSolverRate,
@@ -40,6 +41,8 @@ const AUTOCOMPLETE_TEMPERATURE_RANGE_TOLERANCE = 1e-6;
 const RECIPE_TEMPERATURE_EPSILON = 0.01;
 const AUTOCOMPLETE_OUTPUT_NOISE_RELATIVE_TOLERANCE = 1e-7;
 const MAX_COUPLED_SOLVES = 12;
+/** Solves in a row whose loop temperatures did not settle before autocomplete gives up. */
+const MAX_UNSETTLED_PASSES = 4;
 const MAX_FALLBACK_EXPANSIONS = 2;
 const MAX_AUTOCOMPLETE_CYCLE_BRANCH_SOLVES = 32;
 const FALLBACK_RECIPE_IDS = {
@@ -2011,8 +2014,23 @@ function materializePlan(
     if (!selectedCandidateIds.has(node.id)) continue;
     const result = verification.results.get(node.id);
     const resolvedRecipe = verification.nodeRecipes[node.id];
+    const existingNonTarget = model.candidates.some(
+      (c) => c.kind === 'existing' && c.node.id === node.id && !c.node.data.isTarget,
+    );
     for (const [inputIndex, inputFlow] of result?.inputFlows.entries() ?? []) {
-      if (!inputFlow.hasDeficiency) continue;
+      // flow-status tolerance: temperature-dependent recipes settle to 1e-6 degrees, which can
+      // leave rounding-sized shortfalls between the solve and the rebuilt graph
+      if (!inputFlow.hasDeficiency || !hasMeaningfulDeficit(inputFlow.rate, inputFlow.connected)) {
+        continue;
+      }
+      // empty inputs of non-target nodes already on the canvas are left empty on purpose
+      // (only targets are completed); they show as shortages, as they did before
+      if (
+        existingNonTarget &&
+        !recipeEdges.some((e) => e.targetHandle === buildHandleId(node.id, 'input', inputIndex))
+      ) {
+        continue;
+      }
       deficientInputs.push({
         nodeId: node.id,
         inputIndex,
@@ -2381,6 +2399,7 @@ async function runAutocomplete(
   const coupledSolveHistory: AutocompleteCycleSolution[] = [];
   let previousCoupledPassFlows: Record<string, number> | undefined;
   let previousCoupledPassEdges: Edge[] | undefined;
+  let unsettledPasses = 0;
 
   for (let coupledPass = 0; coupledPass < MAX_COUPLED_SOLVES; coupledPass += 1) {
     if (runId !== activeAutocompleteRun) {
@@ -2572,6 +2591,21 @@ async function runAutocomplete(
     coupledPassDebugTrace.push(refreshResult.debugInfo);
     previousCoupledPassFlows = result.connectionFlows;
     previousCoupledPassEdges = coupledPassEdges;
+    if (!refreshResult.debugInfo.temperatureConverged) {
+      unsettledPasses += 1;
+    } else {
+      unsettledPasses = 0;
+    }
+    // A plan whose loop switches itself off does not settle. Its recipes were refreshed at
+    // the temperatures the loop actually reached, which tightens the temperature limits on
+    // the connections (e.g. a condenser's coolant): solve again with them before giving up.
+    if (
+      unsettledPasses > 0 &&
+      unsettledPasses < MAX_UNSETTLED_PASSES &&
+      coupledPass < MAX_COUPLED_SOLVES - 1
+    ) {
+      continue;
+    }
     if (!refreshResult.debugInfo.temperatureConverged) {
       return {
         feasible: false,
