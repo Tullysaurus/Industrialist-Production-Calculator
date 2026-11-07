@@ -198,6 +198,7 @@ export function runLayout(
     seed: options.seed,
     wireWeight: 1,
     jump: Math.max(1, options.quantumJump || 1),
+    quantum: !!options.quantumNodes,
     useModules: options.tuning?.useModules ?? true,
     slack: options.tuning?.slack ?? 1,
     stallLimit: options.tuning?.stallLimit,

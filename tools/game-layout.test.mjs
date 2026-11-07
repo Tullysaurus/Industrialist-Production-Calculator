@@ -494,3 +494,62 @@ test('grouping: same machines prefer one row or a mirrored pair, and options are
   assert.equal(res.summary.fullyRouted, true);
   assert.equal(errorsOf(D.evaluateDoc(ctx, res.doc)).length, 0);
 });
+
+test('quantum piping: inputs through any node, outputs only from nodes near their own port', () => {
+  const P = ctx.problem;
+  let inputs = 0;
+  for (const net of P.nets) {
+    for (const t of net.terminals) {
+      const node = P.nodes[P.instances[t.inst][0]];
+      if (!t.qports) continue;
+      assert.deepEqual(t.qports.slice(0, t.ports.length), t.ports, 'own ports come first');
+      if (t.direction === 'input') {
+        inputs++;
+        assert.equal(t.qports.length, node.shape.ports.size, 'an input may use any node');
+      } else {
+        const own = t.ports.map((id) => node.shape.ports.get(id));
+        for (const id of t.qports) {
+          const q = node.shape.ports.get(id);
+          const gap = Math.min(
+            ...own.flatMap((o) =>
+              o.cells.flatMap(([ax, ay]) =>
+                q.cells.map(([bx, by]) => Math.abs(ax - bx) + Math.abs(ay - by)),
+              ),
+            ),
+          );
+          assert.ok(gap <= 3, `${id} is within reach of the output's port`);
+        }
+      }
+    }
+  }
+  assert.ok(inputs > 0, 'the sample save has machines with more than one node');
+});
+
+test('quantum piping: a generated layout uses other nodes and opens without errors', () => {
+  const res = runLayout(input, {
+    timeBudget: 16,
+    valves: false,
+    seed: 1,
+    quantumJump: 3,
+    quantumNodes: true,
+  });
+  assert.equal(res.summary.fullyRouted, true);
+  const view = D.evaluateDoc(ctx, res.doc);
+  assert.equal(errorsOf(view).length, 0, JSON.stringify(errorsOf(view).slice(0, 3)));
+  // at least one pipe ends at a node that is not its own port
+  const P = ctx.problem;
+  let viaOther = 0;
+  for (const net of P.nets) {
+    const ni = net.id;
+    const nodes = view.sol.netNodes[ni];
+    for (const t of net.terminals) {
+      const m = view.sol.machines.find((x) => x.inst === t.inst);
+      if (!m || !t.qports) continue;
+      const own = t.ports.some((pid) =>
+        view.sol.access(m, pid, net.large).some((a) => nodes.has(a)),
+      );
+      if (!own) viaOther++;
+    }
+  }
+  assert.ok(viaOther > 0, 'quantum piping feeds some machine through another node');
+});

@@ -173,6 +173,7 @@ export function GameLayoutTray({ model }: { model: LayoutViewModel }) {
   const flowView = useGameLayoutStore((s) => s.flowView);
   const showArrows = useGameLayoutStore((s) => s.showArrows);
   const showPower = useGameLayoutStore((s) => s.showPower);
+  const quantum = useGameLayoutStore((s) => s.options.quantum);
   const running = useGameLayoutStore((s) => s.generator.status === 'running');
   const st = useGameLayoutStore.getState;
   const setDoc = useFlowStore((s) => s.setGameLayout);
@@ -217,7 +218,7 @@ export function GameLayoutTray({ model }: { model: LayoutViewModel }) {
       st().notify('Everything that can be routed is routed');
       return;
     }
-    const res = routeNetworks(view, nets, 10);
+    const res = routeNetworks(view, nets, 10, quantum);
     setDoc(res.doc);
     st().notify(
       res.failed.length
@@ -243,7 +244,7 @@ export function GameLayoutTray({ model }: { model: LayoutViewModel }) {
       return;
     }
     const base = evaluateDoc(ctx, doc ?? emptyLayoutDoc(), { analyse: false });
-    const res = routeNetworks(base, nets, 10);
+    const res = routeNetworks(base, nets, 10, quantum);
     setDoc(res.doc);
     st().notify(
       `Re-routed ${res.routed} pipe(s)${res.failed.length ? `, no room for ${res.failed.length}` : ''}`,

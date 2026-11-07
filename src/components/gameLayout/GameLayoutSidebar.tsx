@@ -181,6 +181,17 @@ export function GameLayoutSidebar({ model }: { model: LayoutViewModel }) {
         <label className={styles.check}>
           <input
             type="checkbox"
+            checked={options.quantum}
+            onChange={(e) => st().setOptions({ quantum: e.target.checked })}
+            disabled={generator.status === 'running'}
+          />
+          <span>
+            Quantum piping (feed machines through any node, passthroughs and intersections on nodes)
+          </span>
+        </label>
+        <label className={styles.check}>
+          <input
+            type="checkbox"
             checked={options.rows}
             onChange={(e) => st().setOptions({ rows: e.target.checked })}
             disabled={generator.status === 'running'}

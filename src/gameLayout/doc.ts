@@ -359,7 +359,11 @@ export function evaluateDoc(
     for (const t of net.terminals) {
       const m = instM.get(t.inst);
       if (!m) continue;
-      if (!t.ports.some((pid) => sol.access(m, pid, net.large).some((a) => nodes.has(a)))) {
+      if (
+        !(t.qports ?? t.ports).some((pid) =>
+          sol.access(m, pid, net.large).some((a) => nodes.has(a)),
+        )
+      ) {
         const [nIdx, li] = P.instances[t.inst];
         problems.push({
           severity: 'error',

@@ -14,6 +14,7 @@ import {
   treeFarm,
   valveShape,
   type MachineData,
+  type Port,
   type PortKind,
   type Shape,
 } from './geometry';
@@ -67,6 +68,14 @@ export interface Terminal {
   inst: number;
   /** Candidate port ids (the pipe may attach to any one of them). */
   ports: string[];
+  /**
+   * Candidate ports with quantum piping (`ports` first, then the extra ones): an input can be
+   * fed through any node of the machine, an output taken from any node within
+   * QUANTUM_OUTPUT_REACH tiles of its port (but not near another output's port). Rule checks
+   * always accept these (it is how the game works); the router uses them only when the
+   * generator's quantum option is on.
+   */
+  qports?: string[];
   /** "input": machine takes from the pipe, "output": machine feeds it. */
   direction: 'input' | 'output';
   /** Planned flow through this terminal, /s. */
@@ -1021,6 +1030,7 @@ export function buildProblem(input: LayoutInput, cfgOverrides?: Partial<LayoutCo
   }
   const kept = nets.filter((n) => n.terminals.length >= 2);
   kept.forEach((n, i) => (n.id = i));
+  addQuantumPorts(kept, nodes, instances);
 
   const spacing = new Map<string, number>();
   for (const [mid, d] of Object.entries(cfg.minSpacing)) if (d > 0) spacing.set(mid, d);
@@ -1086,4 +1096,56 @@ function valveChain(terms: Terminal[]): { sources: Terminal[]; outlets: Terminal
   const outlets = [...per.keys()].sort((a, b) => a - b).map((i) => per.get(i)!);
   if (outlets.length < 2) return null;
   return { sources, outlets };
+}
+
+/** How far (tiles, between port tiles) a machine's output reaches to another node of it. */
+export const QUANTUM_OUTPUT_REACH = 3;
+
+function portGap(a: Port, b: Port): number {
+  let d = Infinity;
+  for (const [ax, ay] of a.cells)
+    for (const [bx, by] of b.cells) d = Math.min(d, Math.abs(ax - bx) + Math.abs(ay - by));
+  return d;
+}
+
+/** The candidate ports a terminal may use with quantum piping (see Terminal.qports). */
+function addQuantumPorts(nets: Net[], nodes: PNode[], instances: [number, number][]): void {
+  for (const net of nets) {
+    const perInst = new Map<number, number>();
+    for (const t of net.terminals) perInst.set(t.inst, (perInst.get(t.inst) ?? 0) + 1);
+    for (const t of net.terminals) {
+      const node = nodes[instances[t.inst][0]];
+      // valves / adapters are the layout's own pieces; a machine on both ends of one pipe
+      // (a loop into itself) keeps its real ports so the two ends stay apart
+      if (node.synthetic || (perInst.get(t.inst) ?? 0) > 1 || !t.slot) continue;
+      const slot = [...node.slots.values()].find(
+        (s) => s.direction === t.slot![1] && s.idx === t.slot![2],
+      );
+      if (!slot || slot.requireAll) continue;
+      const all = [...node.shape.ports.values()];
+      const own = t.ports.map((id) => node.shape.ports.get(id)).filter((p): p is Port => !!p);
+      if (!own.length) continue;
+      let extra: Port[];
+      if (t.direction === 'input') {
+        extra = all;
+      } else {
+        // outputs of other products: their ports must stay out of reach, or a pipe on a node
+        // near both would take both
+        const mine = new Set(slot.ports);
+        const others = [...node.slots.values()]
+          .filter((s) => s.direction === 'output' && s.product !== slot.product)
+          .flatMap((s) => s.ports.filter((id) => !mine.has(id)))
+          .map((id) => node.shape.ports.get(id))
+          .filter((p): p is Port => !!p);
+        extra = all.filter(
+          (q) =>
+            own.some((o) => portGap(o, q) <= QUANTUM_OUTPUT_REACH) &&
+            others.every((o) => portGap(o, q) > QUANTUM_OUTPUT_REACH),
+        );
+      }
+      const q = [...t.ports];
+      for (const p of extra) if (!q.includes(p.id)) q.push(p.id);
+      if (q.length > t.ports.length) t.qports = q;
+    }
+  }
 }

@@ -203,7 +203,7 @@ export class Analysis {
       let at: number | null = null;
       let cells: number[] = [];
       if (m) {
-        for (const pid of t.ports) {
+        for (const pid of t.qports ?? t.ports) {
           const acc = this.sol.access(m, pid, large).filter((a) => nodes.has(a));
           if (acc.length) {
             at = Math.min(...acc);

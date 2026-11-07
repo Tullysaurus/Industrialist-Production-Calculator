@@ -85,6 +85,11 @@ export interface LayoutOptions {
   grouping?: { rows: boolean; flowOrder: boolean; facing: boolean; strength: number };
   /** Max tiles a pipe may hop over other pipes (quantum piping), 0 = off. */
   quantumJump: number;
+  /**
+   * Quantum piping through nodes: a pipe feeds a machine through any of its nodes and takes an
+   * output from any node near the output's port (Terminal.qports).
+   */
+  quantumNodes?: boolean;
   config?: Partial<LayoutConfig>;
   /** The current document: its pinned machines / pipes / pieces are kept as they are. */
   pinned?: GameLayoutDoc;

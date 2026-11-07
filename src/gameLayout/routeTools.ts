@@ -49,7 +49,11 @@ function bounds(view: DocView, extra: [number, number][] = []): [number, number,
  * A router over the layout: machines block, every network's current route is committed, and
  * each network's terminals are the ports of placed machines.
  */
-export function buildEditorGrid(view: DocView, extra: [number, number][] = []): EditorGrid {
+export function buildEditorGrid(
+  view: DocView,
+  extra: [number, number][] = [],
+  quantum = false,
+): EditorGrid {
   const P = view.ctx.problem;
   const [x0, y0, x1, y1] = bounds(view, extra);
   const gw = x1 - x0;
@@ -72,7 +76,7 @@ export function buildEditorGrid(view: DocView, extra: [number, number][] = []): 
       .map((t) => {
         const m = instM.get(t.inst)!;
         const cells = new Set<number>();
-        for (const pid of t.ports) {
+        for (const pid of quantum ? (t.qports ?? t.ports) : t.ports) {
           const p = m.shape.ports.get(pid);
           if (!p) continue;
           const pts = net.large ? [largeAnchor(p)] : accessCells(p);
@@ -170,12 +174,17 @@ export interface RouteOutcome {
  * Route (or re-route) the given networks around everything else. Pinned pipes are never
  * touched; networks whose machines are not all placed are routed between the placed ones.
  */
-export function routeNetworks(view: DocView, nets: number[], timeLimit = 8): RouteOutcome {
+export function routeNetworks(
+  view: DocView,
+  nets: number[],
+  timeLimit = 8,
+  quantum = false,
+): RouteOutcome {
   const P = view.ctx.problem;
   const pinned = new Set(view.doc.pipes.filter((p) => p.pinned).map((p) => p.net));
   const todo = nets.filter((ni) => !pinned.has(P.nets[ni].key));
   if (!todo.length) return { doc: view.doc, routed: 0, failed: [], conflictFree: true };
-  const grid = buildEditorGrid(view);
+  const grid = buildEditorGrid(view, [], quantum);
   const ok = grid.router.runSubset(todo, timeLimit, () => now() / 1000);
   let doc = view.doc;
   const failed: string[] = [];

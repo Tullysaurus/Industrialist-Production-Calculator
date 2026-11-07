@@ -46,6 +46,11 @@ export interface GeneratorOptions {
   facing: boolean;
   /** 0..1: how much space tidiness may cost. */
   tidiness: number;
+  /**
+   * Quantum piping: feed machines through any of their nodes (and take outputs from nodes
+   * near the output port), passthroughs flat against large nodes, intersections on nodes.
+   */
+  quantum: boolean;
 }
 
 const OPTIONS_KEY = 'industrialist.gameLayout.options';
@@ -59,6 +64,7 @@ function readOptions(): GeneratorOptions {
     flowOrder: false,
     facing: true,
     tidiness: 0.5,
+    quantum: true,
   };
   try {
     const raw = localStorage.getItem(OPTIONS_KEY);
@@ -78,6 +84,7 @@ function readOptions(): GeneratorOptions {
         typeof v.tidiness === 'number' && v.tidiness >= 0 && v.tidiness <= 1
           ? v.tidiness
           : fallback.tidiness,
+      quantum: typeof v.quantum === 'boolean' ? v.quantum : fallback.quantum,
     };
   } catch {
     return fallback;
@@ -198,6 +205,7 @@ export const useGameLayoutStore = create<GameLayoutEditorState>((set, get) => ({
       },
       seed: Math.floor(Math.random() * 1e9),
       quantumJump: 3,
+      quantumNodes: get().options.quantum,
       pinned: pinned ?? undefined,
     };
     try {

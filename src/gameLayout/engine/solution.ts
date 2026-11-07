@@ -430,7 +430,10 @@ export class Solution {
       const nodes = this.netNodes[ni];
       for (const t of net.terminals) {
         const m = instM.get(t.inst);
-        if (!m || !t.ports.some((p) => this.access(m, p, net.large).some((a) => nodes.has(a)))) {
+        if (
+          !m ||
+          !(t.qports ?? t.ports).some((p) => this.access(m, p, net.large).some((a) => nodes.has(a)))
+        ) {
           errs.push(`${net.label}: a ${P.nodes[m?.node ?? 0].shape.name} is not connected`);
         }
       }

@@ -30,6 +30,8 @@ export interface OptimizeOptions {
   seed: number;
   wireWeight: number;
   jump: number;
+  /** Quantum piping: pipes may feed a machine through any of its nodes (Terminal.qports). */
+  quantum?: boolean;
   useModules: boolean;
   slack: number;
   log: (m: string) => void;
@@ -254,6 +256,7 @@ export function realize(
   info: PlacementInfo,
   jump: number,
   pinned?: PinnedSpec,
+  quantum = false,
 ): Realized {
   const { xs, ys, W, H, geos } = info;
   const gw = W + 2 * MARGIN;
@@ -287,7 +290,7 @@ export function realize(
     terms: net.terminals.map((t) => {
       const m = instPos.get(t.inst)!;
       const cells = new Set<number>();
-      for (const pid of t.ports) {
+      for (const pid of quantum ? (t.qports ?? t.ports) : t.ports) {
         const p = m.shape.ports.get(pid);
         if (!p) continue;
         if (net.large) {
@@ -516,7 +519,7 @@ export function optimize(problem: Problem, o: OptimizeOptions): Solution {
     if (o.shouldStop?.()) break;
     attempt++;
     o.log(`Attempt ${attempt} (${phase}): ${Math.max(0, left()).toFixed(0)}s left`);
-    const r = realize(problem, blocks, info, o.jump, o.pinned);
+    const r = realize(problem, blocks, info, o.jump, o.pinned, o.quantum);
     if (o.stallLimit) r.router.stallLimit = o.stallLimit;
     // a bounded share per attempt, so corridors can be widened / tightened several times
     const routeTime = Math.max(minAttemptTime, Math.min(left() * 0.3, 45));
