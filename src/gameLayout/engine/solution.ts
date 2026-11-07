@@ -5,6 +5,7 @@ import type { Problem } from './problem';
 import { EDGE_CROSS, EDGE_HOP, EDGE_LCROSS, EDGE_STEP } from './router';
 import { spacingViolations, type SpacedRect } from './spacing';
 import { now } from './clock';
+import { aspectPenalty, hullStats, type HullStats } from './hull';
 
 /**
  * Tiles are packed into one number: (y + OFF) * KX + (x + OFF). The offset lets hand-edited
@@ -25,6 +26,9 @@ export interface SolMachine {
   rot: number;
   local: number;
 }
+
+/** Weight of a pipe tile in the layout cost (an empty tile is 1). */
+export const PIPE_WEIGHT = 0.1;
 
 function inc(m: Map<number, number>, k: number, d = 1) {
   m.set(k, (m.get(k) ?? 0) + d);
@@ -177,6 +181,7 @@ export class Solution {
     }
     if (!Number.isFinite(x0)) [x0, y0, x1, y1] = [0, 0, 0, 0];
     this.bbox = [x0, y0, x1, y1];
+    this.hullCache = null;
   }
 
   crossings(): Crossing[] {
@@ -206,6 +211,48 @@ export class Solution {
   get area(): number {
     return this.width * this.height;
   }
+
+  /** Used tiles (machines and pipes) as a mask over the bounding box. */
+  usedMask(): Uint8Array {
+    const [x0, y0] = this.bbox;
+    const w = this.width;
+    const mask = new Uint8Array(w * this.height);
+    for (const c of this.blocked.keys()) mask[(ky(c) - y0) * w + kx(c) - x0] = 1;
+    for (const cells of this.cells) for (const c of cells) mask[(ky(c) - y0) * w + kx(c) - x0] = 1;
+    return mask;
+  }
+
+  private hullCache: HullStats | null = null;
+
+  /** Orthogonal hull and empty tiles inside it. */
+  get hull(): HullStats {
+    this.hullCache ??= hullStats(this.usedMask(), this.width, this.height);
+    return this.hullCache;
+  }
+
+  /** Pipe tiles (normal and large). */
+  get pipeTiles(): number {
+    const s = new Set<number>();
+    for (const cells of this.cells) for (const c of cells) s.add(c);
+    return s.size;
+  }
+
+  /**
+   * What the generator minimises: empty tiles inside the orthogonal hull, a soft penalty for
+   * elongated layouts, and pipe length as a tie-break.
+   */
+  get cost(): number {
+    const h = this.hull;
+    return (
+      h.empty +
+      aspectPenalty(h.width, h.height, h.hull) +
+      Solution.notchWeight * (h.width * h.height - h.hull) +
+      PIPE_WEIGHT * this.pipeTiles
+    );
+  }
+
+  /** Cost of a bounding-box tile outside the orthogonal hull (an empty tile inside costs 1). */
+  static notchWeight = 0;
 
   overfull(): number[] {
     const out = new Set<number>();

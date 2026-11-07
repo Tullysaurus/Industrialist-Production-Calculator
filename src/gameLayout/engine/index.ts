@@ -150,6 +150,8 @@ function summary(sol: Solution, doc: GameLayoutDoc, elapsed: number, log: string
     width: sol.width,
     height: sol.height,
     area: sol.area,
+    empty: sol.hull.empty,
+    hullArea: sol.hull.hull,
     fullyRouted: sol.ok,
     conflicts: sol.overfull().length,
     unrouted: sol.failed.size,
@@ -183,6 +185,9 @@ export function runLayout(
     useModules: options.tuning?.useModules ?? true,
     slack: options.tuning?.slack ?? 1,
     stallLimit: options.tuning?.stallLimit,
+    seams: options.tuning?.seams ?? true,
+    hullCost: options.tuning?.hullCost ?? true,
+    notchWeight: options.tuning?.notchWeight,
     log,
     shouldStop: cb.shouldStop,
     pinned: pinnedSpec(problem, options.pinned),
@@ -264,7 +269,7 @@ export function runLayout(
     }
   }
   log(
-    `Footprint ${sol.width} x ${sol.height} = ${sol.area.toLocaleString('en-US')} tiles (${sol.ok ? 'fully routed' : 'NOT fully routed'})`,
+    `Footprint ${sol.width} x ${sol.height} = ${sol.area.toLocaleString('en-US')} tiles, ${sol.hull.empty.toLocaleString('en-US')} empty tiles inside the outline (${sol.ok ? 'fully routed' : 'NOT fully routed'})`,
   );
   const doc = toDoc(problem, sol, options.pinned, options.valves ? analysis : null);
   const result = { doc, summary: summary(sol, doc, elapsed(), [...lines]) };

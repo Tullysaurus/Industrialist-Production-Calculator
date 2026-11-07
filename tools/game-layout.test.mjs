@@ -154,3 +154,52 @@ test('a generated layout opens in the editor without errors and keeps pinned mac
     assert.deepEqual([m.x, m.y, m.rot, m.pinned], [o.x, o.y, o.rot, true], `${m.key} stayed put`);
   }
 });
+
+test('the orthogonal hull does not count the notch of an L shape as empty space', async () => {
+  const { hullStats, rectHullArea } = await viteServer.ssrLoadModule(
+    '/src/gameLayout/engine/hull.ts',
+  );
+  // L shape in a 4x4 box: the top-right 2x2 notch is outside the hull, the gap at (1, 1) inside
+  const L = [
+    [1, 1, 0, 0],
+    [1, 0, 0, 0],
+    [1, 1, 1, 1],
+    [1, 1, 1, 1],
+  ];
+  const mask = Uint8Array.from(L.flat());
+  const h = hullStats(mask, 4, 4);
+  assert.equal(h.used, 11);
+  assert.equal(h.hull, 12);
+  assert.equal(h.empty, 1);
+  // two rectangles in an L: the hull is their union
+  assert.equal(
+    rectHullArea([
+      [0, 0, 2, 4],
+      [2, 2, 2, 2],
+    ]),
+    12,
+  );
+});
+
+test('seam carving keeps a routed layout valid and never adds empty space', async () => {
+  const { optimize } = await viteServer.ssrLoadModule('/src/gameLayout/engine/optimize.ts');
+  const { seamCompact } = await viteServer.ssrLoadModule('/src/gameLayout/engine/seams.ts');
+  const problem = buildProblem(input);
+  const sol = optimize(problem, {
+    timeBudget: 8,
+    seed: 3,
+    wireWeight: 1,
+    jump: 3,
+    useModules: true,
+    slack: 1,
+    log: () => {},
+    seams: false,
+    hullCost: false,
+  });
+  assert.equal(sol.ok, true);
+  const carved = seamCompact(sol);
+  assert.deepEqual(carved.validate(3), []);
+  assert.ok(carved.hull.empty <= sol.hull.empty);
+  assert.ok(carved.cost <= sol.cost);
+  assert.equal(carved.machines.length, sol.machines.length);
+});

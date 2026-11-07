@@ -167,9 +167,9 @@ export function GameLayoutSidebar({ model }: { model: LayoutViewModel }) {
                 ref={(el) => el?.style.setProperty('--progress', String(pct))}
               />
             </div>
-            {progress?.bestArea != null && (
+            {progress?.bestEmpty != null && (
               <div className={styles['progress-text']}>
-                Best: {progress.bestArea.toLocaleString()} tiles
+                Best: {progress.bestEmpty.toLocaleString()} empty tiles
                 {progress.bestRouted ? ', fully routed' : ', routing'}
               </div>
             )}
@@ -179,7 +179,7 @@ export function GameLayoutSidebar({ model }: { model: LayoutViewModel }) {
         {generator.last && generator.status !== 'running' && (
           <Row
             label="Last run"
-            value={`${generator.last.area.toLocaleString()} tiles, ${Math.round(generator.last.elapsed)}s`}
+            value={`${generator.last.empty.toLocaleString()} empty of ${generator.last.hullArea.toLocaleString()} tiles, ${Math.round(generator.last.elapsed)}s`}
           />
         )}
         {generator.log.length > 0 && (

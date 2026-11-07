@@ -55,11 +55,15 @@ the flowchart changes (new machines appear as unplaced, removed ones are flagged
   passthroughs and intersections. Undo and redo are shared with the flowchart.
 - **Routing tools**: auto-route everything between placed machines that is not routed yet, or
   re-route selected pipes / the pipes of selected machines around everything else.
-- **Generator**: packs all machines into a small footprint (simulated annealing over a
-  sequence-pair floorplan of machine blocks and modules) and routes every pipe with a negotiated
-  congestion A\* router (large pipes first, then normal pipes around and through them). Pinned
-  machines and pipes form a fixed block the rest is laid out around. It runs in a Web Worker,
-  shows its best layout while it works and can be stopped at any time.
+- **Generator**: packs all machines with as little empty space as it can (simulated annealing
+  over a sequence-pair floorplan of machine blocks and modules), routes every pipe with a
+  negotiated congestion A\* router (large pipes first, then normal pipes around and through
+  them), then squeezes out the remaining gaps with seam carving: seams of empty tiles (and
+  straight pipe runs) are cut out row by row, stepping around machines, with one-tile jogs in
+  pipes where a seam crosses them. Empty space is counted inside the layout's orthogonal hull,
+  so an L- or T-shaped layout is not penalised for its notches; very elongated layouts get a
+  small penalty. Pinned machines and pipes form a fixed block the rest is laid out around. It
+  runs in a Web Worker, shows its best layout while it works and can be stopped at any time.
 - **Rules checked** (Problems list): overlaps, pipes under machines, unconnected ports, at most
   two normal pipes per tile, large pipes only crossing at a 2x2 intersection, normal pipes only
   crossing large pipes through a 4x2 passthrough on a straight run, quantum hops only over
@@ -99,6 +103,7 @@ Layout generator tools (development):
 ```sh
 node tools/game-layout-input.mjs save.json input.json   # solve a save and write the engine input
 node tools/game-layout-bench.mjs input.json 60          # run the generator headlessly
+node tools/game-layout-synth.mjs out-dir                # write synthetic benchmark saves
 ```
 
 The checked-in WebAssembly bundle is sufficient for local app development.
@@ -107,20 +112,20 @@ Docker is required only to rebuild the native solver; follow the instructions in
 
 ## Code map
 
-| Path                       | Responsibility                                                                    |
-| -------------------------- | --------------------------------------------------------------------------------- |
-| `src/components/canvas/`   | Shared canvas host plus renderer-specific PixiJS and React Flow views             |
-| `src/components/overlays/` | Recipe selector, optimizer, Data Manager, saves, themes, machines, and Help       |
-| `src/data/`                | Built-in recipes, machines, products, research, lookups, and special recipe rules |
-| `src/solver/`              | Flow and temperature pipeline, balancing, autocomplete, and ratio optimization    |
-| `src/gameLayout/`          | In-game layout document, editing operations, routing tools, and the generator     |
-| `src/components/gameLayout/` | In-game layout editor: tile canvas, tools tray, sidebar, inspector              |
-| `src/stores/`              | Zustand stores for canvas, solver results, settings, and overlays                 |
-| `src/persistence/`         | IndexedDB access, autosave, save transformation, and graph merging                |
-| `src/tutorials/`           | Guided tutorial steps and tutorial graph definitions                              |
-| `functions/api/`           | Wiki data proxy used by the Data Manager comparison view                          |
-| `public/scip/`             | Runtime SCIP and SoPlex WebAssembly assets                                        |
-| `tools/scip-wasm/`         | Native wrapper, pinned build setup, and smoke tests                               |
+| Path                         | Responsibility                                                                    |
+| ---------------------------- | --------------------------------------------------------------------------------- |
+| `src/components/canvas/`     | Shared canvas host plus renderer-specific PixiJS and React Flow views             |
+| `src/components/overlays/`   | Recipe selector, optimizer, Data Manager, saves, themes, machines, and Help       |
+| `src/data/`                  | Built-in recipes, machines, products, research, lookups, and special recipe rules |
+| `src/solver/`                | Flow and temperature pipeline, balancing, autocomplete, and ratio optimization    |
+| `src/gameLayout/`            | In-game layout document, editing operations, routing tools, and the generator     |
+| `src/components/gameLayout/` | In-game layout editor: tile canvas, tools tray, sidebar, inspector                |
+| `src/stores/`                | Zustand stores for canvas, solver results, settings, and overlays                 |
+| `src/persistence/`           | IndexedDB access, autosave, save transformation, and graph merging                |
+| `src/tutorials/`             | Guided tutorial steps and tutorial graph definitions                              |
+| `functions/api/`             | Wiki data proxy used by the Data Manager comparison view                          |
+| `public/scip/`               | Runtime SCIP and SoPlex WebAssembly assets                                        |
+| `tools/scip-wasm/`           | Native wrapper, pinned build setup, and smoke tests                               |
 
 ## License and data
 

@@ -82,13 +82,24 @@ export interface LayoutOptions {
   /** The current document: its pinned machines / pipes / pieces are kept as they are. */
   pinned?: GameLayoutDoc;
   /** Internal tuning (benchmarks). */
-  tuning?: { slack?: number; stallLimit?: number; useModules?: boolean };
+  tuning?: {
+    slack?: number;
+    stallLimit?: number;
+    useModules?: boolean;
+    seams?: boolean;
+    hullCost?: boolean;
+    notchWeight?: number;
+  };
 }
 
 export interface LayoutSummary {
   width: number;
   height: number;
   area: number;
+  /** Empty tiles inside the layout's orthogonal hull (what the generator minimises). */
+  empty: number;
+  /** Tiles inside the orthogonal hull. */
+  hullArea: number;
   fullyRouted: boolean;
   conflicts: number;
   unrouted: number;
@@ -277,6 +288,8 @@ export interface LayoutProgress {
   budget: number;
   message: string;
   bestArea: number | null;
+  /** Empty tiles inside the best layout's orthogonal hull. */
+  bestEmpty: number | null;
   bestRouted: boolean;
 }
 

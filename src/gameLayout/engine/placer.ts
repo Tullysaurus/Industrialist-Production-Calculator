@@ -3,6 +3,7 @@ import { sameOption, type BlockLike, type BlockOption, type Geometry } from './b
 import { Rng } from './rng';
 import { spacingViolations, type SpacedRect } from './spacing';
 import { now } from './clock';
+import { aspectPenalty, rectHullArea } from './hull';
 
 export interface PackResult {
   xs: Int32Array;
@@ -87,6 +88,9 @@ export class Placer {
   options: BlockOption[][];
   nets: PlacerNet[];
   lastViolation = 0;
+  /** Cost the orthogonal hull of the blocks (soft aspect penalty) instead of the bounding box. */
+  hullCost: boolean;
+  notchWeight: number;
 
   constructor(
     blocks: BlockLike[],
@@ -98,9 +102,13 @@ export class Placer {
       spaced?: { type: string; inst: number; min: number }[];
       measure?: 'edge' | 'center';
       spacingWeight?: number;
+      hullCost?: boolean;
+      notchWeight?: number;
     } = {},
   ) {
     this.blocks = blocks;
+    this.hullCost = opts.hullCost ?? false;
+    this.notchWeight = opts.notchWeight ?? 0;
     this.measure = opts.measure ?? 'edge';
     this.spacingWeight = opts.spacingWeight ?? 4000;
     this.spaced = (opts.spaced ?? [])
@@ -177,7 +185,12 @@ export class Placer {
       });
       for (const v of spacingViolations(rects, this.measure)) viol += v.need - v.dist;
     }
-    const cost = p.W * p.H + this.wireWeight * wl + this.spacingWeight * viol;
+    let area = p.W * p.H;
+    if (this.hullCost) {
+      const hull = rectHullArea(geos.map((gg, b) => [xs[b], ys[b], gg.w, gg.h]));
+      area = hull + aspectPenalty(p.W, p.H, hull) + this.notchWeight * (p.W * p.H - hull);
+    }
+    const cost = area + this.wireWeight * wl + this.spacingWeight * viol;
     this.lastViolation = viol;
     return [cost, { ...p, geos, wl, viol }];
   }

@@ -2,6 +2,7 @@
 // evaluates the resulting document the way the editor does (problems list).
 // Usage: node tools/game-layout-bench.mjs <input.json> [seconds] [out.json]
 //          [--no-valves] [--seed=N] [--verbose] [--pin=N]   (pin N machines and run again)
+//          [--no-seams] [--no-hull]   (old row/column compaction, bounding-box objective)
 import fs from 'node:fs';
 import { createServer } from 'vite';
 
@@ -23,6 +24,32 @@ try {
   const { runLayout } = await server.ssrLoadModule('/src/gameLayout/engine/index.ts');
   const { buildProblem } = await server.ssrLoadModule('/src/gameLayout/engine/problem.ts');
   const { buildContext, evaluateDoc } = await server.ssrLoadModule('/src/gameLayout/doc.ts');
+  const { hullStats } = await server.ssrLoadModule('/src/gameLayout/engine/hull.ts');
+  // empty tiles inside the orthogonal hull of the document (machines, pipes, pieces)
+  const docHull = (doc) => {
+    const tiles = new Set();
+    const rect = (x, y, w, h) => {
+      for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) tiles.add(`${x + i},${y + j}`);
+    };
+    for (const m of doc.machines) {
+      const odd = m.rot % 2 === 1;
+      rect(m.x, m.y, odd ? m.h : m.w, odd ? m.w : m.h);
+    }
+    for (const p of doc.pipes) {
+      const sz = p.large ? 2 : 1;
+      for (let i = 0; i + 1 < p.nodes.length; i += 2) rect(p.nodes[i], p.nodes[i + 1], sz, sz);
+    }
+    for (const v of doc.valves) rect(v.x, v.y, v.rot % 2 ? 1 : 3, v.rot % 2 ? 3 : 1);
+    for (const v of doc.intersections) rect(v.x, v.y, 2, 2);
+    const xy = [...tiles].map((t) => t.split(',').map(Number));
+    const x0 = Math.min(...xy.map((p) => p[0]));
+    const y0 = Math.min(...xy.map((p) => p[1]));
+    const w = Math.max(...xy.map((p) => p[0])) - x0 + 1;
+    const h = Math.max(...xy.map((p) => p[1])) - y0 + 1;
+    const mask = new Uint8Array(w * h);
+    for (const [x, y] of xy) mask[(y - y0) * w + x - x0] = 1;
+    return hullStats(mask, w, h);
+  };
   const input = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
   const verbose = flags.includes('--verbose');
   const run = (pinned) => {
@@ -39,6 +66,9 @@ try {
           slack: flag('slack', undefined),
           stallLimit: flag('stall', undefined),
           useModules: flags.includes('--no-modules') ? false : undefined,
+          seams: flags.includes('--no-seams') ? false : undefined,
+          hullCost: flags.includes('--no-hull') ? false : undefined,
+          notchWeight: flag('notch', undefined),
         },
       },
       { log: (l) => (verbose || !l.startsWith('    ')) && console.log(l) },
@@ -47,6 +77,10 @@ try {
     console.log(
       `RESULT ${s.width}x${s.height} = ${s.area} tiles, routed=${s.fullyRouted}, conflicts=${s.conflicts}, ` +
         `unrouted=${s.unrouted}, valves=${s.valves}, passthroughs=${s.passthroughs}, ${((Date.now() - t0) / 1000).toFixed(1)}s`,
+    );
+    const hs = docHull(res.doc);
+    console.log(
+      `HULL ${hs.width}x${hs.height}, hull ${hs.hull}, used ${hs.used}, empty ${hs.empty} (${((100 * hs.empty) / hs.hull).toFixed(1)}%)`,
     );
     const view = evaluateDoc(buildContext(buildProblem(input, {})), res.doc);
     const byCode = {};

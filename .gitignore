@@ -25,6 +25,7 @@ tools/*
 !tools/game-layout.test.mjs
 !tools/game-layout-input.mjs
 !tools/game-layout-bench.mjs
+!tools/game-layout-synth.mjs
 !tools/design-rules-baseline.json
 # Local precision and solver diagnostics; retain on disk without committing.
 tools/autocomplete-precision-test.mjs

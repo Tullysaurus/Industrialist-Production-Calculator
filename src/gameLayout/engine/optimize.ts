@@ -19,6 +19,7 @@ import type { Problem } from './problem';
 import { Router, type RouterNet } from './router';
 import { key, kx, ky, Solution, type SolMachine } from './solution';
 import { now } from './clock';
+import { seamCompact } from './seams';
 
 /** Free border around the placement so pipes can run around the outside. */
 const MARGIN = 4;
@@ -39,6 +40,15 @@ export interface OptimizeOptions {
   pinned?: PinnedSpec;
   /** Negotiation passes without improvement before a routing round gives up. */
   stallLimit?: number;
+  /** Compact routed layouts with seam carving (otherwise: whole empty rows / columns). */
+  seams: boolean;
+  /**
+   * Minimise empty tiles inside the orthogonal hull (with a soft aspect penalty) instead of the
+   * bounding box area.
+   */
+  hullCost: boolean;
+  /** Cost of a bounding-box tile outside the hull (an empty tile inside the hull costs 1). */
+  notchWeight?: number;
 }
 
 export interface PinnedSpec {
@@ -396,6 +406,7 @@ export function optimize(problem: Problem, o: OptimizeOptions): Solution {
   const left = () => o.timeBudget - (now() - t0) / 1000;
   const clock = () => now() / 1000;
   Block.initialSlack = o.slack;
+  Solution.notchWeight = o.notchWeight ?? 0;
   const [blocks, instBlock] = buildBlocks(problem, o.useModules, o.seed, o.log, o.pinned, o.slack);
   const spaced = problem.instances
     .map(([ni], g) => ({
@@ -409,6 +420,8 @@ export function optimize(problem: Problem, o: OptimizeOptions): Solution {
     seed: o.seed,
     spaced,
     measure: problem.spacingMeasure,
+    hullCost: o.hullCost,
+    notchWeight: o.notchWeight,
   });
   o.log(
     `Placement (${blocks.length} blocks, ${problem.instances.length} machines, ${problem.nets.length} pipe networks)...`,
@@ -436,7 +449,7 @@ export function optimize(problem: Problem, o: OptimizeOptions): Solution {
     const better =
       !best ||
       (sol.ok && !best.ok) ||
-      (sol.ok && best.ok && sol.area < best.area) ||
+      (sol.ok && best.ok && (o.hullCost ? sol.cost < best.cost : sol.area < best.area)) ||
       (!sol.ok && !best.ok && score(sol) < score(best));
     if (better) {
       best = sol;
@@ -480,10 +493,13 @@ export function optimize(problem: Problem, o: OptimizeOptions): Solution {
     }
     if (sol.ok) {
       const raw = sol.area;
-      sol = sol.compact(o.log, t0 + o.timeBudget * 1000 * 1.05);
+      const deadline = t0 + o.timeBudget * 1000 * 1.05;
+      sol = o.seams ? seamCompact(sol, o.log, deadline) : sol.compact(o.log, deadline);
       sol.ok = true;
       sol.nOver = 0;
-      o.log(`  ROUTED. footprint ${raw} -> ${sol.area} tiles after compaction`);
+      o.log(
+        `  ROUTED. footprint ${raw} -> ${sol.area} tiles after compaction, ${sol.hull.empty} empty tiles in the hull`,
+      );
       const improved = offer(sol);
       if (improved) {
         bestExt = snapshot();

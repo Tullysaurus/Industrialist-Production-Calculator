@@ -15,6 +15,7 @@ ctx.onmessage = (event: MessageEvent<LayoutWorkerRequest>) => {
   const { id } = req;
   const started = performance.now();
   let bestArea: number | null = null;
+  let bestEmpty: number | null = null;
   let bestRouted = false;
   try {
     runLayout(req.input, req.options, {
@@ -22,6 +23,7 @@ ctx.onmessage = (event: MessageEvent<LayoutWorkerRequest>) => {
       progress: (phase, message, best) => {
         if (best) {
           bestArea = best.area;
+          bestEmpty = best.hull.empty;
           bestRouted = best.ok;
         }
         post({
@@ -33,6 +35,7 @@ ctx.onmessage = (event: MessageEvent<LayoutWorkerRequest>) => {
             elapsed: (performance.now() - started) / 1000,
             budget: req.options.timeBudget,
             bestArea,
+            bestEmpty,
             bestRouted,
           },
         });

@@ -100,7 +100,7 @@ export function GameLayoutTray({ model }: { model: LayoutViewModel }) {
       const s = res.summary;
       st().notify(
         s.fullyRouted
-          ? `Layout ready: ${s.width} x ${s.height} = ${s.area.toLocaleString()} tiles`
+          ? `Layout ready: ${s.width} x ${s.height}, ${s.empty.toLocaleString()} empty tiles`
           : `Best layout so far has ${s.conflicts} conflicting tile(s); see Problems`,
         s.fullyRouted ? 'success' : 'error',
       );
