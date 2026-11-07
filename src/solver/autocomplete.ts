@@ -40,6 +40,8 @@ const PLACEHOLDER_PRODUCTS = new Set(['any_fluid', 'any_item']);
 const AUTOCOMPLETE_TEMPERATURE_RANGE_TOLERANCE = 1e-6;
 const RECIPE_TEMPERATURE_EPSILON = 0.01;
 const AUTOCOMPLETE_OUTPUT_NOISE_RELATIVE_TOLERANCE = 1e-7;
+/** Shortfall the final check of a generated graph tolerates, relative to the input's need. */
+const AUTOCOMPLETE_VERIFICATION_RELATIVE_TOLERANCE = 1e-5;
 const MAX_COUPLED_SOLVES = 12;
 /** Solves in a row whose loop temperatures did not settle before autocomplete gives up. */
 const MAX_UNSETTLED_PASSES = 4;
@@ -2018,9 +2020,18 @@ function materializePlan(
       (c) => c.kind === 'existing' && c.node.id === node.id && !c.node.data.isTarget,
     );
     for (const [inputIndex, inputFlow] of result?.inputFlows.entries() ?? []) {
-      // flow-status tolerance: temperature-dependent recipes settle to 1e-6 degrees, which can
-      // leave rounding-sized shortfalls between the solve and the rebuilt graph
-      if (!inputFlow.hasDeficiency || !hasMeaningfulDeficit(inputFlow.rate, inputFlow.connected)) {
+      // temperature-dependent recipes (a power plant's exhaust, a turbine's steam) settle a
+      // hair differently in the rebuilt graph than in the last solve: shortfalls of a few
+      // parts per million are not real shortages
+      if (
+        !inputFlow.hasDeficiency ||
+        !hasMeaningfulDeficit(
+          inputFlow.rate,
+          inputFlow.connected,
+          undefined,
+          AUTOCOMPLETE_VERIFICATION_RELATIVE_TOLERANCE,
+        )
+      ) {
         continue;
       }
       // empty inputs of non-target nodes already on the canvas are left empty on purpose
