@@ -73,9 +73,9 @@ the flowchart changes (new machines appear as unplaced, removed ones are flagged
   of every pipe split (valves at their set percentages).
 
 Rates come from the website's own flow pipeline, so the layout always uses the same numbers as
-the flowchart. Assumed geometry that is not in the game data: the 3x1 valve control, the 8x8
-pipe adapter (large port centred on top, eight small ports in a flattened U) and the 4x2
-passthrough.
+the flowchart. Geometry that is not in the game data: the 3x1 valve control, the 4x4 pipe
+adapter (large port centred on top, eight small ports in a U: the whole bottom and the lower
+two tiles of each side) and the 4x2 passthrough.
 
 ## Run locally
 

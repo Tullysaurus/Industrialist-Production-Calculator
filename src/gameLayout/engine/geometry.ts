@@ -421,14 +421,15 @@ export function valveShape(kind: PortKind): Shape {
   };
 }
 
-export const ADAPTER_SIZE = 8;
+export const ADAPTER_SIZE = 4;
 export const ADAPTER_SMALL_PORTS = 8;
 
 /**
- * 8x8 large <-> small fluid pipe adapter. One 2-wide large port centred on the top side and
- * eight 1-wide small ports in a flattened U: two low on the left side, two bottom-left, two
- * bottom-right and two low on the right side. It works in both directions and any subset of
- * the small ports may be used, so it also splits / merges small pipes.
+ * 4x4 large <-> small fluid pipe adapter. One 2-wide large port centred on the top side and
+ * eight 1-wide small ports in a U: the lower two tiles of the left side, all four tiles of the
+ * bottom and the lower two tiles of the right side (the bottom corner tiles have a port on both
+ * of their outer sides). It works in both directions and any subset of the small ports may be
+ * used, so it also splits / merges small pipes.
  */
 export function adapterShape(smallToLarge: boolean): Shape {
   const n = ADAPTER_SIZE;
@@ -448,14 +449,14 @@ export function adapterShape(smallToLarge: boolean): Shape {
     width: 2,
   });
   const smallCells: [Side, Cell][] = [
-    ['left', [0, n - 3]],
     ['left', [0, n - 2]],
+    ['left', [0, n - 1]],
+    ['bottom', [0, n - 1]],
     ['bottom', [1, n - 1]],
     ['bottom', [2, n - 1]],
-    ['bottom', [n - 3, n - 1]],
-    ['bottom', [n - 2, n - 1]],
+    ['bottom', [3, n - 1]],
+    ['right', [n - 1, n - 1]],
     ['right', [n - 1, n - 2]],
-    ['right', [n - 1, n - 3]],
   ];
   smallCells.forEach(([side, cell], i) => {
     const id = `adapter_small_${i + 1}`;

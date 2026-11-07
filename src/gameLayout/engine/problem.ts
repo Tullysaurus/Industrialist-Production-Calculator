@@ -733,7 +733,7 @@ export function buildProblem(input: LayoutInput, cfgOverrides?: Partial<LayoutCo
         });
         continue;
       }
-      // mixed widths: large pipe <-> 8x8 adapter <-> small pipe(s)
+      // mixed widths: large pipe <-> 4x4 adapter <-> small pipe(s)
       const through = flow === null ? null : sideFlow.small / kSplit; // >0: small side feeds large side
       const s2l = through === null || through >= 0;
       const amount = through === null ? null : Math.abs(through);
@@ -880,7 +880,7 @@ export function buildProblem(input: LayoutInput, cfgOverrides?: Partial<LayoutCo
     }
   }
 
-  // ---- adapters become placeable 8x8 pieces, one node per direction
+  // ---- adapters become placeable 4x4 pieces, one node per direction
   for (const s2l of [true, false]) {
     const mine = adapters.filter((a) => a.s2l === s2l);
     if (!mine.length) continue;
@@ -930,7 +930,7 @@ export function buildProblem(input: LayoutInput, cfgOverrides?: Partial<LayoutCo
       });
     });
     notes.push(
-      `${mine.length} pipe adapter(s) ${s2l ? 'small -> large' : 'large -> small'} (8x8, large port on top, 8 small ports in a U - positions assumed)`,
+      `${mine.length} pipe adapter(s) ${s2l ? 'small -> large' : 'large -> small'} (4x4, large port on top, 8 small ports in a U)`,
     );
   }
   for (const net of nets) {
