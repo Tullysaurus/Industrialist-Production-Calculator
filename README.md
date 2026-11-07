@@ -76,7 +76,8 @@ the flowchart changes (new machines appear as unplaced, removed ones are flagged
   against it (the coal power plant pattern: coal in through the exhaust node, exhaust out along
   the face), and to let two large pipes share a node through an intersection piece on it (one
   feeds the machine, the other takes its output). Normal pipes may also hop over up to 3 tiles
-  of other normal pipes. The rule checks always accept these connections.
+  of other normal pipes. The rule checks always accept these connections. The modular turbine
+  cannot be quantum piped: only its own ports connect.
 - **Power**: the generator places HV poles (12x12, 8 nodes of 120 MMF/s, reach 70 tiles),
   MV poles (2x1, 4 nodes of 1.5 MMF/s, reach 22 tiles), HV transformers (8x8, 15 % loss
   without coolant, at most 240 MMF/s on each side; machines can connect straight to either side

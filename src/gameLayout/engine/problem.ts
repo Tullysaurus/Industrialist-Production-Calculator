@@ -1118,6 +1118,8 @@ function addQuantumPorts(nets: Net[], nodes: PNode[], instances: [number, number
       // valves / adapters are the layout's own pieces; a machine on both ends of one pipe
       // (a loop into itself) keeps its real ports so the two ends stay apart
       if (node.synthetic || (perInst.get(t.inst) ?? 0) > 1 || !t.slot) continue;
+      // the modular turbine cannot be quantum piped: only its real ports connect
+      if (node.shape.id.startsWith('modular_turbine')) continue;
       const slot = [...node.slots.values()].find(
         (s) => s.direction === t.slot![1] && s.idx === t.slot![2],
       );
