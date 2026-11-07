@@ -135,6 +135,8 @@ export class Router {
   occL: Int16Array;
   /** Small pipes crossing a large pipe through a passthrough slot. */
   occX: Int16Array;
+  /** Of occX: fluid crossings (a passthrough's two slots carry one kind). */
+  occXF: Int16Array;
   hist: Float32Array;
   /** Tiles occupied by each net (normal tiles / large footprints, crossings excluded). */
   cells: Set<number>[];
@@ -215,6 +217,7 @@ export class Router {
     this.occS = new Int16Array(this.N);
     this.occL = new Int16Array(this.N);
     this.occX = new Int16Array(this.N);
+    this.occXF = new Int16Array(this.N);
     this.hist = new Float32Array(this.N);
     this.cells = nets.map(() => new Set());
     this.tree = nets.map(() => new Set());
@@ -273,7 +276,11 @@ export class Router {
       if (large) this.occL[c]--;
       else this.occS[c]--;
     }
-    for (const c of this.crossCells[ni]) this.occX[c]--;
+    const fluidX = this.nets[ni].kind === 'Fluid' ? 1 : 0;
+    for (const c of this.crossCells[ni]) {
+      this.occX[c]--;
+      this.occXF[c] -= fluidX;
+    }
     for (const c of this.interCells[ni]) this.occI[c]--;
     this.interCells[ni] = new Set();
     this.cells[ni] = new Set();
@@ -316,7 +323,11 @@ export class Router {
         cross.add(a + step);
         cross.add(a + 2 * step);
       }
-      for (const c of cross) this.occX[c]++;
+      const fluidX = this.nets[ni].kind === 'Fluid' ? 1 : 0;
+      for (const c of cross) {
+        this.occX[c]++;
+        this.occXF[c] += fluidX;
+      }
     }
     this.cells[ni] = cells;
     this.tree[ni] = new Set(tree);
@@ -352,7 +363,7 @@ export class Router {
    * A crossing entering tile n in direction d needs a 4x2 passthrough on a straight run of one
    * large pipe: n and the tile after it are the two crossed tiles, the run goes perpendicular.
    */
-  private passthroughFits(n: number, d: number): boolean {
+  private passthroughFits(n: number, d: number, fluid: boolean): boolean {
     const gw = this.gw;
     const across = d < 2 ? 1 : gw; // step from the first to the second crossed tile
     const along = d < 2 ? gw : 1; // step along the large pipe
@@ -362,6 +373,9 @@ export class Router {
     const L = this.occL;
     const S = this.occS;
     const X = this.occX;
+    const XF = this.occXF;
+    // a crossing of the other kind in the piece's other slot: items and fluids never share one
+    const otherKind = (t: number) => (fluid ? X[t] - XF[t] : XF[t]) > 0;
     const ok = (t: number) => t >= 0 && t < this.N && L[t] === 1 && !S[t];
     const free = (t: number) => t < 0 || t >= this.N || L[t] === 0;
     for (const start of [-1, -2]) {
@@ -375,6 +389,7 @@ export class Router {
         const t2 = t + across;
         if (!ok(t) || !ok(t2)) good = false;
         else if (p !== 0 && p !== start + 1 && p !== start + 2 && (X[t] || X[t2])) good = false;
+        else if (otherKind(t) || otherKind(t2)) good = false;
         else if (!free(t - across) || !free(t2 + across)) good = false;
       }
       if (good) return true;
@@ -600,7 +615,7 @@ export class Router {
           if (x3 < x0 || x3 > x1 || y3 < y0 || y3 > y1) continue;
           if (blocked[n2] || blocked[n3] || occL[n2] === 0 || occL[n3] > 0) continue;
           if (occS[n] || occS[n2]) continue;
-          if (!this.passthroughFits(n, d)) continue;
+          if (!this.passthroughFits(n, d, this.curFluid)) continue;
           const pen =
             (1 + this.hist[n] + this.hist[n2]) * (1 + this.pres * (this.occX[n] + this.occX[n2]));
           const s3 = own[n3] === ownGen ? 0 : this.smallCost(n3);
@@ -670,8 +685,12 @@ export class Router {
     ];
   }
 
+  /** Kind of the net being routed (fluid?), for passthrough slots. */
+  private curFluid = false;
+
   routeNet(ni: number): boolean {
     const net = this.nets[ni];
+    this.curFluid = net.kind === 'Fluid';
     const large = net.large;
     const terms = net.terms.filter((t) => t.size > 0);
     if (terms.length < net.terms.length) return false;
@@ -1017,6 +1036,7 @@ export class Router {
    */
   findPath(ni: number, sources: Iterable<number>, targets: Iterable<number>): number[] | null {
     const large = this.nets[ni].large;
+    this.curFluid = this.nets[ni].kind === 'Fluid';
     const ownGen = ++this.gen;
     for (const c of this.tree[ni]) {
       if (large) for (const q of this.footprint(c)) this.own[q] = ownGen;

@@ -571,11 +571,11 @@ export function buildProblem(input: LayoutInput, cfgOverrides?: Partial<LayoutCo
     if (s.connected === null) return null;
     return Math.max(0, s.connected - s.selfFeed);
   };
-  const slotTerminals = (k: string, s: Slot, localIds: number[]): Terminal[] => {
+  const slotTerminals = (k: string, s: Slot, localIds: number[], share?: number): Terminal[] => {
     const [ni] = parseRef(k);
     const node = nodes[ni];
     const ext = external(k);
-    const per = ext === null ? null : ext / node.count;
+    const per = ext === null ? null : ext / (share ?? node.count);
     const ref = parseRef(k);
     const out: Terminal[] = [];
     for (const i of localIds) {
@@ -671,7 +671,61 @@ export function buildProblem(input: LayoutInput, cfgOverrides?: Partial<LayoutCo
       });
       flow = Math.max(sup, dem);
     }
-    const minCount = Math.min(...members.map((k) => nodes[parseRef(k)[0]].count));
+    // Machines whose output on this connection is not needed: when the consumers are already
+    // fully supplied without them and their output is voidable (the machine keeps running when
+    // it backs up), they are left off the pipe network.
+    const keep = members.map((k) => {
+      const nC = nodes[parseRef(k)[0]].count;
+      return Array.from({ length: nC }, (_u, i) => i);
+    });
+    if (flow !== null) {
+      let dem = 0;
+      let sure = 0;
+      const optional: { m: number; i: number; supply: number }[] = [];
+      members.forEach((k, m) => {
+        const [ni, d] = parseRef(k);
+        const node = nodes[ni];
+        if (d === 'input') {
+          dem += ext[m]!;
+          return;
+        }
+        // what one machine of this node puts out at the planned machine count (input shortfalls
+        // of the plan are reported separately)
+        const each = (ss[m].rate ?? 0) * (node.machineCount / Math.max(1, node.count));
+        if (!ss[m].voidable || ss[m].requireAll || !(each > 0)) {
+          sure += ext[m]!;
+          return;
+        }
+        for (let i = 0; i < node.count; i++) optional.push({ m, i, supply: each });
+      });
+      if (dem > 1e-9 && optional.length) {
+        let have = sure;
+        const kept = new Set<string>();
+        for (const o of optional) {
+          if (have >= dem * (1 + cfg.flowMargin)) break;
+          kept.add(`${o.m}|${o.i}`);
+          have += o.supply;
+        }
+        const dropped = optional.length - kept.size;
+        if (dropped > 0 && have >= dem - 1e-9) {
+          members.forEach((_k, m) => {
+            if (!optional.some((o) => o.m === m)) return;
+            keep[m] = keep[m].filter((i) => kept.has(`${m}|${i}`));
+          });
+          notes.push(
+            `${pname(product)}: ${dropped} machine(s) with surplus (voidable) output are not piped - the others cover the ${dem.toFixed(2)}/s needed`,
+          );
+        }
+      }
+    }
+    const minCount = Math.min(...keep.map((l) => l.length).filter((n) => n > 0));
+    // most separate pipes each group can take: one per machine, or one per port when a slot has
+    // several ports (an exhaust stack with two exhaust inputs takes two pipes)
+    const maxSplit = Math.min(
+      ...keep
+        .map((l, m) => (ss[m].requireAll ? l.length : l.length * Math.max(1, ss[m].ports.length)))
+        .filter((n) => n > 0),
+    );
     let kSplit: number;
     if (flow === null) {
       kSplit = minCount;
@@ -684,10 +738,10 @@ export function buildProblem(input: LayoutInput, cfgOverrides?: Partial<LayoutCo
         );
       }
       kSplit = Math.max(1, Math.ceil(need * (1 + cfg.flowMargin) - 1e-9));
-      kSplit = Math.min(kSplit, minCount);
+      kSplit = Math.min(kSplit, maxSplit);
       if (!mixed && flow / kSplit > capacity * 1.0001) {
         warnings.push(
-          `${pname(product)}: ${flow.toFixed(1)}/s over ${kSplit} pipe(s) exceeds the pipe capacity of ${capacity}/s (a group has only ${minCount} machine(s))`,
+          `${pname(product)}: ${flow.toFixed(1)}/s over ${kSplit} pipe(s) exceeds the pipe capacity of ${capacity}/s (a group has only ${minCount} machine(s) with ${maxSplit} port(s) between them - add machines in the flowchart)`,
         );
       }
     }
@@ -695,10 +749,27 @@ export function buildProblem(input: LayoutInput, cfgOverrides?: Partial<LayoutCo
     for (let j = 0; j < kSplit; j++) {
       const parts: { wide: Terminal[]; small: Terminal[] } = { wide: [], small: [] };
       members.forEach((k, m) => {
-        const nC = nodes[parseRef(k)[0]].count;
-        const ids: number[] = [];
-        for (let i = 0; i < nC; i++) if (Math.floor((i * kSplit) / nC) === j) ids.push(i);
-        parts[isWide[m] ? 'wide' : 'small'].push(...slotTerminals(k, ss[m], ids));
+        const L = keep[m];
+        const side = parts[isWide[m] ? 'wide' : 'small'];
+        if (L.length >= kSplit || ss[m].requireAll) {
+          const ids: number[] = [];
+          for (let q = 0; q < L.length; q++)
+            if (Math.floor((q * kSplit) / L.length) === j) ids.push(L[q]);
+          side.push(...slotTerminals(k, ss[m], ids, L.length));
+          return;
+        }
+        // fewer machines than pipes: machine j % n takes this pipe on its own share of ports
+        const n = L.length;
+        const q = j % n;
+        const sharing = Math.floor((kSplit - 1 - q) / n) + 1;
+        const rank = Math.floor(j / n);
+        const [t] = slotTerminals(k, ss[m], [L[q]], n);
+        side.push({
+          ...t,
+          ports: ss[m].ports.filter((_p, pi) => pi % sharing === rank),
+          rate: t.rate === null ? null : t.rate / sharing,
+          capacity: t.capacity === null ? null : t.capacity / sharing,
+        });
       });
       const sfx = kSplit > 1 ? ` [${j + 1}/${kSplit}]` : '';
       // stable across product renames: product id, connected node slots, split index

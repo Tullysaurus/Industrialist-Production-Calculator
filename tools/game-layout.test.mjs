@@ -313,3 +313,77 @@ test('a power plant with crossing large pipes is routed without editor errors', 
   assert.equal(errorsOf(view).length, 0, JSON.stringify(errorsOf(view).slice(0, 3)));
   assert.ok(res.doc.intersections.length > 0, 'the large pipes cross through intersection pieces');
 });
+
+test('surplus voidable outputs are not piped when the consumers are covered', async () => {
+  const node = (id, recipeId, machineCount, settings = {}) => ({
+    id,
+    type: 'recipe',
+    recipeId,
+    machineCount,
+    position: { x: 0, y: 0 },
+    settings,
+  });
+  const pin = await powerInputFrom(
+    [
+      node('drill', 'r_mineshaft_drill_01', 6, {
+        depth: 6000,
+        drill_head: 'steel',
+        acid_type: 'hydrochloric',
+        has_machine_oil: 'No',
+      }),
+      node('bf', 'r_blast_furnace_13', 1),
+    ],
+    [{ id: 'e1', source: 'drill', sourceIndex: 2, target: 'bf', targetIndex: 1 }],
+  );
+  const problem = buildProblem(pin);
+  const rock = problem.nets.find((n) => n.product === 'p_rock');
+  assert.ok(rock, 'the rock connection becomes a pipe network');
+  const sources = rock.terminals.filter((t) => t.direction === 'output');
+  assert.ok(sources.length >= 1 && sources.length < 6, `${sources.length} drill(s) piped`);
+  assert.ok(problem.notes.some((n) => n.includes('surplus')));
+});
+
+test('items and fluids never cross a large pipe through the same passthrough', async () => {
+  const { Router } = await viteServer.ssrLoadModule('/src/gameLayout/engine/router.ts');
+  const gw = 40;
+  const gh = 24;
+  const at = (x, y) => y * gw + x;
+  const nets = [
+    { large: true, kind: 'Fluid', terms: [new Set([at(0, 10)]), new Set([at(37, 10)])] },
+    { large: false, kind: 'Item', terms: [new Set([at(18, 0)]), new Set([at(18, 22)])] },
+    { large: false, kind: 'Fluid', terms: [new Set([at(19, 0)]), new Set([at(19, 22)])] },
+  ];
+  const r = new Router(gw, gh, new Uint8Array(gw * gh), nets, { jump: 3 });
+  assert.equal(r.run(10, 40), true, 'routes without conflicts');
+  const { passthroughs, bad } = r.checkCrossings();
+  assert.equal(bad.size, 0);
+  assert.equal(passthroughs.length, 2, 'one passthrough per kind');
+  assert.notEqual(passthroughs[0].kind, passthroughs[1].kind);
+});
+
+test('a connection over one pipe capacity uses several ports of a single machine', async () => {
+  const node = (id, recipeId, machineCount, settings = {}) => ({
+    id,
+    type: 'recipe',
+    recipeId,
+    machineCount,
+    position: { x: 0, y: 0 },
+    settings,
+  });
+  const pin = await powerInputFrom(
+    [
+      node('cpp', 'r_coal_power_plant_01', 16, { coal_feed: 27.5, air: 27.5, exhaust: 10 }),
+      node('stack', 'r_exhaust_stack_02', 1),
+    ],
+    [{ id: 'e1', source: 'cpp', sourceIndex: 1, target: 'stack', targetIndex: 0 }],
+  );
+  const problem = buildProblem(pin);
+  const exhaust = problem.nets.filter((n) => n.product === 'p_exhaust');
+  const total = exhaust.reduce((a, n) => a + (n.flow ?? 0), 0);
+  assert.ok(total > 12000, `the plan sends ${total.toFixed(0)}/s, more than one large pipe`);
+  assert.equal(exhaust.length, 2, 'two pipe networks');
+  for (const n of exhaust) assert.ok((n.flow ?? 0) <= n.capacity + 1e-6, 'none overloaded');
+  const stackPorts = exhaust.map((n) => n.terminals.find((t) => t.direction === 'input').ports);
+  assert.equal(stackPorts[0].length, 1);
+  assert.notDeepEqual(stackPorts[0], stackPorts[1], 'each pipe on its own stack port');
+});
