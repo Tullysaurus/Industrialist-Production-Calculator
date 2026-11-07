@@ -23,6 +23,7 @@ import { fillOrthoHull } from './hull';
 import { EDGE_CROSS, EDGE_HOP, EDGE_LCROSS, EDGE_STEP } from './router';
 import { key, kx, ky, Solution } from './solution';
 import { now } from './clock';
+import { pieceSize } from './power';
 
 /** Axis 0: vertical seam (removes one x per row). Axis 1: horizontal seam (one y per column). */
 type Axis = 0 | 1;
@@ -122,6 +123,10 @@ export function carveSeam(sol: Solution, axis: Axis, banned?: Set<number>): Seam
 
   // machines (their whole bounding box) and the pinned area are rigid
   for (const m of sol.machines) rigidRect(m.x, m.y, m.shape.w, m.shape.h);
+  for (const p of sol.power) {
+    const [w, h] = pieceSize(p.kind, p.rot);
+    rigidRect(p.x, p.y, w, h);
+  }
   if (sol.pinnedRegion) {
     const [px0, py0, px1, py1] = sol.pinnedRegion;
     rigidRect(px0, py0, px1 - px0, py1 - py0);
@@ -456,6 +461,18 @@ function apply(sol: Solution, g: Grid, s: Int32Array): Solution | null {
     const dx = kx(c) - px0;
     const dy = ky(c) - py0;
     trial.pinnedRegion = [px0 + dx, py0 + dy, px1 + dx, py1 + dy];
+  }
+  if (sol.power.length) {
+    trial.setPower(
+      sol.power.map((p) => {
+        const c = shift(key(p.x, p.y));
+        return { ...p, x: kx(c), y: ky(c) };
+      }),
+      sol.powerAssign,
+    );
+    // every machine stays connected and within capacity
+    const before = sol.powerResult?.problems.length ?? 0;
+    if ((trial.powerResult?.problems.length ?? 0) > before) return null;
   }
   if (trial.validate(1).length) return null;
   trial.ok = sol.ok;

@@ -20,6 +20,7 @@ import { Router, type RouterNet } from './router';
 import { key, kx, ky, Solution, type SolMachine } from './solution';
 import { now } from './clock';
 import { seamCompact } from './seams';
+import { planPower, powerConsumers } from './power';
 
 /** Free border around the placement so pipes can run around the outside. */
 const MARGIN = 4;
@@ -49,6 +50,8 @@ export interface OptimizeOptions {
   hullCost: boolean;
   /** Cost of a bounding-box tile outside the hull (an empty tile inside the hull costs 1). */
   notchWeight?: number;
+  /** Place power poles, transformers and the grid connection. */
+  power?: boolean;
 }
 
 export interface PinnedSpec {
@@ -397,6 +400,53 @@ function classify(
   return [hits, inner];
 }
 
+/**
+ * Widen the side corridor of the block nearest to each point (grid coordinates relative to the
+ * placement, i.e. including MARGIN) on the side of the block the point is closest to.
+ */
+function widenFor(
+  points: [number, number, number][],
+  info: PlacementInfo,
+  blocks: BlockLike[],
+): string[] {
+  const done = new Set<string>();
+  const out: string[] = [];
+  for (const [px, py, step] of points) {
+    const x = px - MARGIN;
+    const y = py - MARGIN;
+    let best = 0;
+    let bd = Infinity;
+    blocks.forEach((_b, b) => {
+      const g = info.geos[b];
+      const d =
+        Math.max(info.xs[b] - x, 0, x - (info.xs[b] + g.w) + 1) +
+        Math.max(info.ys[b] - y, 0, y - (info.ys[b] + g.h) + 1);
+      if (d < bd) {
+        bd = d;
+        best = b;
+      }
+    });
+    const g = info.geos[best];
+    const rx = x - info.xs[best];
+    const ry = y - info.ys[best];
+    const sides: [number, Side][] = [
+      [rx, 'left'],
+      [ry, 'top'],
+      [g.w - rx, 'right'],
+      [g.h - ry, 'bottom'],
+    ];
+    sides.sort((a, b) => a[0] - b[0]);
+    const side = sides[0][1];
+    const k = `${best}|${side}`;
+    if (done.has(k)) continue;
+    done.add(k);
+    blocks[best].extSide[side] += step;
+    blocks[best].clearCache();
+    out.push(`${blocks[best].label.slice(0, 30)}:${side}+${step}`);
+  }
+  return out;
+}
+
 function score(sol: Solution): number {
   return sol.nOver + 50 * sol.failed.size;
 }
@@ -458,6 +508,7 @@ export function optimize(problem: Problem, o: OptimizeOptions): Solution {
     return better;
   };
   const minAttemptTime = Math.min(5, Math.max(1, o.timeBudget * 0.05));
+  let powerGrows = 0;
   while (left() > Math.min(10, o.timeBudget * 0.08) || attempt === 0) {
     if (o.shouldStop?.()) break;
     attempt++;
@@ -491,6 +542,25 @@ export function optimize(problem: Problem, o: OptimizeOptions): Solution {
         if (!first.done) bad.push(first.value);
       }
     }
+    const powerShort: [number, number, number][] = [];
+    if (sol.ok && o.power) {
+      // poles in the routed layout (before compaction, so positions match the block grid)
+      const plan = planPower(problem, sol);
+      sol.setPower(plan.pieces, plan.assign);
+      const kinds = new Map<string, number>();
+      for (const p of plan.pieces) kinds.set(p.kind, (kinds.get(p.kind) ?? 0) + 1);
+      o.log(
+        `  power: ${[...kinds].map(([k, n]) => `${n} ${k}`).join(', ')}` +
+          (plan.result.problems.length ? `, ${plan.result.problems.length} problem(s)` : ''),
+      );
+      if (plan.unpowered.size && powerGrows < 4) {
+        for (const c of powerConsumers(problem, sol.machines)) {
+          if (!plan.unpowered.has(c.inst)) continue;
+          // an HV pole needs 12x12 tiles, an MV pole 2x1
+          powerShort.push([Math.floor(c.at[0]), Math.floor(c.at[1]), c.type === 'HV' ? 12 : 3]);
+        }
+      }
+    }
     if (sol.ok) {
       const raw = sol.area;
       const deadline = t0 + o.timeBudget * 1000 * 1.05;
@@ -501,6 +571,16 @@ export function optimize(problem: Problem, o: OptimizeOptions): Solution {
         `  ROUTED. footprint ${raw} -> ${sol.area} tiles after compaction, ${sol.hull.empty} empty tiles in the hull`,
       );
       const improved = offer(sol);
+      if (powerShort.length) {
+        // room for the poles that did not fit: widen the corridor on the nearest side of
+        // the blocks those machines are in (a 12x12 HV pole needs a wide one)
+        powerGrows++;
+        const grown = widenFor(powerShort, info, blocks);
+        o.log(`  widening for power: ${grown.join(', ')}`);
+        phase = 'grow';
+        info = placer.evaluate(state)[1];
+        continue;
+      }
       if (improved) {
         bestExt = snapshot();
       } else {
@@ -572,6 +652,15 @@ export function optimize(problem: Problem, o: OptimizeOptions): Solution {
     }
   }
   if (!best) throw new Error('no layout produced');
+  // power for a layout that could not be routed completely (best effort)
+  const fin: Solution = best;
+  if (o.power && !fin.power.length) {
+    const plan = planPower(problem, fin);
+    fin.setPower(plan.pieces, plan.assign);
+    o.log(
+      `  power (unrouted layout): ${plan.pieces.length} piece(s), ${plan.result.problems.length} problem(s)`,
+    );
+  }
   o.log(`Done in ${((now() - t0) / 1000).toFixed(0)}s`);
   return best;
 }

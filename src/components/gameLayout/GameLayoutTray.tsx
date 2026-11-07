@@ -16,7 +16,12 @@ import {
   Sparkles,
   Spline,
   Trash2,
+  Plug,
+  PlugZap,
+  Repeat2,
+  UtilityPole,
   Waves,
+  Zap,
 } from 'lucide-react';
 import { useState } from 'react';
 import type { LayoutViewModel } from './useLayoutView';
@@ -40,6 +45,10 @@ const TOOLS: { id: EditorTool; label: string; key: string; Icon: typeof Spline }
   { id: 'valve', label: 'Valve', key: 'Q', Icon: Gauge },
   { id: 'passthrough', label: 'Passthru', key: 'T', Icon: ArrowLeftRight },
   { id: 'intersection', label: 'Cross', key: 'I', Icon: Cross },
+  { id: 'hv', label: 'HV pole', key: 'H', Icon: UtilityPole },
+  { id: 'mv', label: 'MV pole', key: 'M', Icon: Plug },
+  { id: 'transformer', label: 'Transf.', key: 'K', Icon: Repeat2 },
+  { id: 'grid', label: 'Grid', key: 'G', Icon: PlugZap },
 ];
 
 const FLOW_LABEL: Record<FlowView, string> = {
@@ -70,6 +79,7 @@ export function GameLayoutTray({ model }: { model: LayoutViewModel }) {
   const selection = useGameLayoutStore((s) => s.selection);
   const flowView = useGameLayoutStore((s) => s.flowView);
   const showArrows = useGameLayoutStore((s) => s.showArrows);
+  const showPower = useGameLayoutStore((s) => s.showPower);
   const running = useGameLayoutStore((s) => s.generator.status === 'running');
   const st = useGameLayoutStore.getState;
   const setDoc = useFlowStore((s) => s.setGameLayout);
@@ -226,6 +236,14 @@ export function GameLayoutTray({ model }: { model: LayoutViewModel }) {
       onClick: () => st().toggleArrows(),
       active: showArrows,
       title: 'Show flow direction arrows',
+    },
+    {
+      id: 'power',
+      label: 'Power',
+      Icon: Zap,
+      onClick: () => st().togglePower(),
+      active: showPower,
+      title: 'Show power cables (poles, transformers and the grid connection are always shown)',
     },
     {
       id: 'fit',

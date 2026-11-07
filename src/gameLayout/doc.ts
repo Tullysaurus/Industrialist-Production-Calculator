@@ -3,6 +3,7 @@
  * the engine Solution built from it (for validation and the flow analysis), and the list of
  * problems the editor shows. Pure functions; nothing here touches the stores.
  */
+import { pieceName, pieceTiles as powerTiles } from './engine/power';
 import type { GameLayoutDoc, DocMachine, DocPipe, DocValve, DocPassthrough } from './docSchema';
 import { Analysis, type Junction, type PlacedValve } from './engine/flows';
 import { accessCells, rot, valveShape, type Cell, type Shape } from './engine/geometry';
@@ -31,7 +32,12 @@ export interface LayoutProblem {
     | 'orphan-machine'
     | 'orphan-pipe'
     | 'unplaced'
-    | 'starved';
+    | 'starved'
+    | 'unpowered'
+    | 'pole-unconnected'
+    | 'power-overload'
+    | 'no-grid'
+    | 'power-overlap';
   message: string;
   /** Tiles to highlight / zoom to. */
   tiles: [number, number][];
@@ -252,6 +258,16 @@ export function evaluateDoc(
   const failed = P.nets.map((_n, i) => i).filter((i) => netNodes[i].size === 0);
   const sol = new Solution(P, machines, netNodes, netEdges, failed, opts.jump ?? 3, false);
   sol.ok = true;
+  const feeds = new Map<string, string>();
+  for (const [k, id] of Object.entries(doc.powerFeeds ?? {})) {
+    const cut = k.lastIndexOf('|');
+    const inst = ctx.instByKey.get(k.slice(0, cut));
+    if (inst !== undefined) feeds.set(`${inst}|${k.slice(cut + 1)}`, id);
+  }
+  sol.setPower(
+    (doc.power ?? []).map((p) => ({ ...p })),
+    feeds,
+  );
 
   // ---- machines
   const seen = new Map<number, number>();
@@ -521,6 +537,47 @@ export function evaluateDoc(
         tiles: [[it.x, it.y]],
         pieceId: it.id,
       });
+    }
+  }
+
+  // ---- power: every machine on a pole of its voltage, poles on the grid, within capacity
+  const pr = sol.powerResult;
+  if (pr) {
+    for (const q of pr.problems) {
+      const inst = q.inst;
+      problems.push({
+        severity: 'error',
+        code: q.code,
+        message: q.message,
+        tiles: q.tiles,
+        ...(inst !== undefined ? { machineKey: ctx.instKeys[inst] } : {}),
+        ...(q.pieceId ? { pieceId: q.pieceId } : {}),
+      });
+    }
+  } else if (machines.some((m) => (P.nodes[m.node].powerUse ?? 0) > 0)) {
+    problems.push({
+      severity: 'warning',
+      code: 'unpowered',
+      message: 'No power poles yet: run the generator or place poles and a grid connection',
+      tiles: [],
+    });
+  }
+  {
+    const busy = new Set<number>();
+    for (const c of sol.blocked.keys()) busy.add(c);
+    for (const cs of sol.cells) for (const c of cs) busy.add(c);
+    for (const p of doc.power ?? []) {
+      const clash = powerTiles(p).find(([x, y]) => busy.has(key(x, y)));
+      for (const [x, y] of powerTiles(p)) busy.add(key(x, y));
+      if (clash) {
+        problems.push({
+          severity: 'error',
+          code: 'power-overlap',
+          message: `${pieceName(p.kind)} sits on a machine, a pipe or another power piece`,
+          tiles: [clash],
+          pieceId: p.id,
+        });
+      }
     }
   }
 

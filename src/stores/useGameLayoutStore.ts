@@ -14,18 +14,36 @@ import type {
 } from '../gameLayout/engine/types';
 import type { GameLayoutDoc } from '../gameLayout/docSchema';
 
-export type EditorTool = 'select' | 'pipe' | 'erase' | 'valve' | 'passthrough' | 'intersection';
+export type EditorTool =
+  | 'select'
+  | 'pipe'
+  | 'erase'
+  | 'valve'
+  | 'passthrough'
+  | 'intersection'
+  | 'hv'
+  | 'mv'
+  | 'transformer'
+  | 'grid';
+
+/** Tools that place a power piece (the tool id is the piece kind). */
+export const POWER_TOOLS = ['hv', 'mv', 'transformer', 'grid'] as const;
+export type PowerTool = (typeof POWER_TOOLS)[number];
+export const isPowerTool = (t: EditorTool): t is PowerTool =>
+  (POWER_TOOLS as readonly string[]).includes(t);
 export type FlowView = 'planned' | 'even' | 'valve';
 
 export interface GeneratorOptions {
   timeBudget: number;
   valves: boolean;
+  /** Place power poles, transformers and the grid connection. */
+  power: boolean;
 }
 
 const OPTIONS_KEY = 'industrialist.gameLayout.options';
 
 function readOptions(): GeneratorOptions {
-  const fallback: GeneratorOptions = { timeBudget: 60, valves: true };
+  const fallback: GeneratorOptions = { timeBudget: 60, valves: true, power: true };
   try {
     const raw = localStorage.getItem(OPTIONS_KEY);
     if (!raw) return fallback;
@@ -36,6 +54,7 @@ function readOptions(): GeneratorOptions {
           ? v.timeBudget
           : fallback.timeBudget,
       valves: typeof v.valves === 'boolean' ? v.valves : fallback.valves,
+      power: typeof v.power === 'boolean' ? v.power : fallback.power,
     };
   } catch {
     return fallback;
@@ -62,6 +81,8 @@ interface GameLayoutEditorState {
   selection: Selection;
   flowView: FlowView;
   showArrows: boolean;
+  /** Draw power cables. */
+  showPower: boolean;
   showLabels: boolean;
   rerouteOnMove: boolean;
   /** Tiles to flash / zoom to (problem list). */
@@ -81,6 +102,7 @@ interface GameLayoutEditorState {
   clearSelection: () => void;
   setFlowView: (v: FlowView) => void;
   toggleArrows: () => void;
+  togglePower: () => void;
   toggleLabels: () => void;
   toggleRerouteOnMove: () => void;
   focusTiles: (tiles: [number, number][]) => void;
@@ -107,6 +129,7 @@ export const useGameLayoutStore = create<GameLayoutEditorState>((set, get) => ({
   selection: emptySelection(),
   flowView: 'valve',
   showArrows: true,
+  showPower: true,
   showLabels: true,
   rerouteOnMove: true,
   focus: null,
@@ -125,6 +148,7 @@ export const useGameLayoutStore = create<GameLayoutEditorState>((set, get) => ({
   clearSelection: () => set({ selection: emptySelection() }),
   setFlowView: (flowView) => set({ flowView }),
   toggleArrows: () => set((s) => ({ showArrows: !s.showArrows })),
+  togglePower: () => set((s) => ({ showPower: !s.showPower })),
   toggleLabels: () => set((s) => ({ showLabels: !s.showLabels })),
   toggleRerouteOnMove: () => set((s) => ({ rerouteOnMove: !s.rerouteOnMove })),
   focusTiles: (tiles) => set({ focus: { tiles, id: ++seq } }),
@@ -146,6 +170,7 @@ export const useGameLayoutStore = create<GameLayoutEditorState>((set, get) => ({
     const opts: LayoutOptions = {
       timeBudget: get().options.timeBudget,
       valves: get().options.valves,
+      power: get().options.power,
       seed: Math.floor(Math.random() * 1e9),
       quantumJump: 3,
       pinned: pinned ?? undefined,

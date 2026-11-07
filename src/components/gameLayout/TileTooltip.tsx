@@ -1,3 +1,4 @@
+import { fmt as fmtPower, pieceName, POLE } from '../../gameLayout/engine/power';
 import type { DocView } from '../../gameLayout/doc';
 import { edgeKey } from '../../gameLayout/engine/flows';
 import { key } from '../../gameLayout/engine/solution';
@@ -27,6 +28,15 @@ export function TileTooltip({ view, hit, tile, px, py }: Props) {
   if (inst !== undefined) {
     const [ni, li] = P.instances[inst];
     lines.push({ label: `${P.nodes[ni].name}`, detail: `#${li + 1} of ${P.nodes[ni].count}` });
+    const use = P.nodes[ni].powerUse ?? 0;
+    if (use > 0) {
+      const off = view.sol.powerResult?.unpowered.has(inst);
+      lines.push({
+        label: `Power ${P.nodes[ni].powerType ?? ''}`,
+        detail: `${fmtPower(use)}${off === undefined ? '' : off ? ' - not connected' : ' - connected'}`,
+        ...(off ? { tone: 'error' as const } : {}),
+      });
+    }
   }
   const nets = hit.netsAt.get(t) ?? [];
   for (const ni of nets) {
@@ -53,7 +63,22 @@ export function TileTooltip({ view, hit, tile, px, py }: Props) {
     });
   }
   const piece = hit.pieceAt.get(t);
-  if (piece) {
+  const pp = piece ? (view.doc.power ?? []).find((x) => x.id === piece) : undefined;
+  if (pp) {
+    const i = (view.doc.power ?? []).indexOf(pp);
+    const pr = view.sol.powerResult;
+    const load = pr?.load[i] ?? 0;
+    const nodes = pr?.nodeUse[i]?.filter((u) => u > 0).length ?? 0;
+    const spec = pp.kind === 'hv' ? POLE.HV : pp.kind === 'mv' ? POLE.MV : null;
+    lines.push({
+      label: pieceName(pp.kind),
+      detail: spec
+        ? `${fmtPower(load)} of ${fmtPower(spec.nodes * spec.rating)}, ${nodes} of ${spec.nodes} nodes in use`
+        : pp.kind === 'transformer'
+          ? `${fmtPower(load)} out (MV), 15% loss`
+          : 'external HV supply',
+    });
+  } else if (piece) {
     const v = view.doc.valves.find((x) => x.id === piece);
     if (v)
       lines.push({

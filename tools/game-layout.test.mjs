@@ -387,3 +387,59 @@ test('a connection over one pipe capacity uses several ports of a single machine
   assert.equal(stackPorts[0].length, 1);
   assert.notDeepEqual(stackPorts[0], stackPorts[1], 'each pipe on its own stack port');
 });
+
+test('power: reach, capacity and the grid are checked', async () => {
+  const PW = await viteServer.ssrLoadModule('/src/gameLayout/engine/power.ts');
+  const grid = { id: 'g', kind: 'grid', x: -30, y: 0, rot: 0 }; // reaches the HV pole only
+  const hv = { id: 'h', kind: 'hv', x: 20, y: 0, rot: 0 }; // centre (26, 6)
+  const tr = { id: 't', kind: 'transformer', x: 40, y: 0, rot: 0 }; // MV port (43.5, 0.5)
+  const mv = { id: 'm', kind: 'mv', x: 50, y: 0, rot: 0 }; // centre (51, 0.5)
+  const pieces = [grid, hv, tr, mv];
+  const consumer = (key, at, type, load) => ({ inst: 0, key, at, type, load, assumed: false });
+  // an HV machine 50 tiles from the HV pole and an MV machine 10 tiles from the MV pole
+  let r = PW.solvePower(
+    [consumer('0|0', [76, 6], 'HV', 5e6), consumer('1|0', [61, 0.5], 'MV', 1e6)],
+    pieces,
+  );
+  assert.deepEqual(r.problems, []);
+  assert.equal(r.unpowered.size, 0);
+  // the transformer passes on its MV load plus 15 %
+  const ti = pieces.indexOf(tr);
+  assert.ok(Math.abs(r.load[pieces.indexOf(hv)] - (5e6 + 1e6 / 0.85)) < 1);
+  assert.equal(r.load[ti], 1e6);
+  // out of reach (MV: 22 - 4 tiles)
+  r = PW.solvePower([consumer('0|0', [51 + 19, 0.5], 'MV', 1)], pieces);
+  assert.equal(r.unpowered.size, 1);
+  assert.equal(r.problems[0].code, 'unpowered');
+  // an MV pole has 4 nodes of 1.5 MMF/s: five 1.4 MMF/s machines do not fit
+  r = PW.solvePower(
+    [0, 1, 2, 3, 4].map((i) => consumer(`${i}|0`, [55, 0.5], 'MV', 1.4e6)),
+    pieces,
+  );
+  assert.ok(r.problems.some((p) => p.code === 'power-overload'));
+  // no grid connection: nothing is powered
+  r = PW.solvePower([consumer('0|0', [61, 0.5], 'MV', 1)], [hv, tr, mv]);
+  assert.ok(r.problems.some((p) => p.code === 'no-grid'));
+  assert.equal(r.unpowered.size, 1);
+});
+
+test('generated layouts power every machine and keep the plan in the saved document', () => {
+  const res = runLayout(input, { timeBudget: 16, valves: false, seed: 4, quantumJump: 3 });
+  const doc = normalizeLayoutDoc(JSON.parse(JSON.stringify(res.doc)));
+  assert.ok(doc.power.length > 0, 'poles are placed');
+  assert.ok(
+    doc.power.some((p) => p.kind === 'grid'),
+    'with a grid connection',
+  );
+  assert.ok(Object.keys(doc.powerFeeds).length > 0, 'machine feeds are saved');
+  const view = D.evaluateDoc(ctx, doc);
+  const power = view.problems.filter((p) =>
+    ['unpowered', 'pole-unconnected', 'power-overload', 'no-grid', 'power-overlap'].includes(
+      p.code,
+    ),
+  );
+  assert.deepEqual(
+    power.map((p) => p.message),
+    [],
+  );
+});

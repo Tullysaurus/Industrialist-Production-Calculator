@@ -7,6 +7,13 @@ import { spacingViolations, type SpacedRect } from './spacing';
 import { now } from './clock';
 import { aspectPenalty, hullStats, type HullStats } from './hull';
 import { lcrossMid, pieceOk, pieceTiles } from './intersection';
+import {
+  pieceTiles as powerTiles,
+  powerConsumers,
+  solvePower,
+  type PowerPiece,
+  type PowerResult,
+} from './power';
 
 /**
  * Tiles are packed into one number: (y + OFF) * KX + (x + OFF). The offset lets hand-edited
@@ -30,6 +37,8 @@ export interface SolMachine {
 
 /** Weight of a pipe tile in the layout cost (an empty tile is 1). */
 export const PIPE_WEIGHT = 0.1;
+/** Cost of a power problem (an unpowered machine, an overloaded pole...). */
+export const POWER_WEIGHT = 1000;
 
 function inc(m: Map<number, number>, k: number, d = 1) {
   m.set(k, (m.get(k) ?? 0) + d);
@@ -61,6 +70,10 @@ export class Solution {
   autoPieces: boolean;
   /** Pinned area (x0, y0, x1, y1): compaction never deletes a row / column through it. */
   pinnedRegion: [number, number, number, number] | null = null;
+  /** Power poles, transformers and the grid connection (empty: power not planned). */
+  power: PowerPiece[] = [];
+  /** Machine power connection (consumer key) -> id of the pole the layout put it on. */
+  powerAssign = new Map<string, string>();
 
   constructor(
     problem: Problem,
@@ -98,6 +111,10 @@ export class Solution {
     s.ok = this.ok;
     s.nOver = this.nOver;
     s.pinnedRegion = this.pinnedRegion;
+    s.setPower(
+      this.power.map((p) => ({ ...p })),
+      new Map(this.powerAssign),
+    );
     return s;
   }
 
@@ -181,8 +198,37 @@ export class Solution {
       }
     }
     if (!Number.isFinite(x0)) [x0, y0, x1, y1] = [0, 0, 0, 0];
+    for (const p of this.power ?? []) {
+      for (const [x, y] of powerTiles(p)) {
+        if (x < x0) x0 = x;
+        if (y < y0) y0 = y;
+        if (x + 1 > x1) x1 = x + 1;
+        if (y + 1 > y1) y1 = y + 1;
+      }
+    }
     this.bbox = [x0, y0, x1, y1];
     this.hullCache = null;
+    this.powerCache = null;
+  }
+
+  /** Sets the power pieces (and updates the bounding box). */
+  setPower(pieces: PowerPiece[], assign?: Map<string, string>): void {
+    this.power = pieces;
+    if (assign) this.powerAssign = assign;
+    this.refresh();
+  }
+
+  private powerCache: PowerResult | null = null;
+
+  /** The power network over the pieces (null when power is not planned). */
+  get powerResult(): PowerResult | null {
+    if (!this.power.length) return null;
+    this.powerCache ??= solvePower(
+      powerConsumers(this.problem, this.machines),
+      this.power,
+      this.powerAssign,
+    );
+    return this.powerCache;
   }
 
   crossings(): Crossing[] {
@@ -220,6 +266,9 @@ export class Solution {
     const mask = new Uint8Array(w * this.height);
     for (const c of this.blocked.keys()) mask[(ky(c) - y0) * w + kx(c) - x0] = 1;
     for (const cells of this.cells) for (const c of cells) mask[(ky(c) - y0) * w + kx(c) - x0] = 1;
+    for (const p of this.power) {
+      for (const [x, y] of powerTiles(p)) mask[(y - y0) * w + x - x0] = 1;
+    }
     return mask;
   }
 
@@ -248,7 +297,8 @@ export class Solution {
       h.empty +
       aspectPenalty(h.width, h.height, h.hull) +
       Solution.notchWeight * (h.width * h.height - h.hull) +
-      PIPE_WEIGHT * this.pipeTiles
+      PIPE_WEIGHT * this.pipeTiles +
+      POWER_WEIGHT * (this.powerResult?.problems.length ?? 0)
     );
   }
 
@@ -350,6 +400,21 @@ export class Solution {
           return errs;
         }
         seen.set(c, m.inst);
+      }
+    }
+    if (this.power.length) {
+      const pipeTiles = new Set<number>();
+      for (const cs of this.cells) for (const c of cs) pipeTiles.add(c);
+      const taken = new Set<number>();
+      for (const p of this.power) {
+        for (const [x, y] of powerTiles(p)) {
+          const c = key(x, y);
+          if (seen.has(c) || pipeTiles.has(c) || taken.has(c)) {
+            errs.push(`a power piece at (${p.x}, ${p.y}) overlaps something`);
+            return errs;
+          }
+          taken.add(c);
+        }
       }
     }
     for (let ni = 0; ni < P.nets.length && errs.length < limit; ni++) {

@@ -1,8 +1,11 @@
+import { pieceSize } from '../../gameLayout/engine/power';
+import { pieceTiles as powerPieceTiles } from '../../gameLayout/engine/power';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DocView } from '../../gameLayout/doc';
 import { evaluateDoc, instanceShape, passthroughTiles, valveGeometry } from '../../gameLayout/doc';
 import {
   addIntersection,
+  addPowerPiece,
   addPassthrough,
   addValve,
   emptySelection,
@@ -28,7 +31,7 @@ import {
   type EditorGrid,
 } from '../../gameLayout/routeTools';
 import { useFlowStore } from '../../stores/useFlowStore';
-import { useGameLayoutStore } from '../../stores/useGameLayoutStore';
+import { isPowerTool, useGameLayoutStore } from '../../stores/useGameLayoutStore';
 import { drawLayout, readTheme, type Camera, type Overlay } from './renderer';
 import { TileTooltip } from './TileTooltip';
 import styles from './GameLayout.module.css';
@@ -99,6 +102,8 @@ function buildHitIndex(view: DocView): HitIndex {
       pieceAt.set(key(p.x + dx, p.y + dy), p.id);
     }
   }
+  for (const p of view.doc.power ?? [])
+    for (const [x, y] of powerPieceTiles(p)) pieceAt.set(key(x, y), p.id);
   return { machineAt: view.sol.blocked, netsAt, portNets, pieceAt };
 }
 
@@ -144,6 +149,7 @@ export function GameLayoutCanvas({ view, doc }: Props) {
   const flowView = useGameLayoutStore((s) => s.flowView);
   const showArrows = useGameLayoutStore((s) => s.showArrows);
   const showLabels = useGameLayoutStore((s) => s.showLabels);
+  const showPower = useGameLayoutStore((s) => s.showPower);
   const focus = useGameLayoutStore((s) => s.focus);
   const fitRequest = useGameLayoutStore((s) => s.fitRequest);
   const preview = useGameLayoutStore((s) => s.generator.preview);
@@ -176,20 +182,23 @@ export function GameLayoutCanvas({ view, doc }: Props) {
         cam.current,
         shown,
         readTheme(c),
-        { flowView, showArrows, showLabels, selection, preview },
+        { flowView, showArrows, showLabels, showPower, selection, preview },
         {
           ...overlay,
           pipePreview: tool === 'pipe' ? overlay.pipePreview : null,
           activeNet: tool === 'pipe' ? overlay.activeNet : null,
           pieceGhost:
-            tool === 'valve' || tool === 'passthrough' || tool === 'intersection'
+            tool === 'valve' ||
+            tool === 'passthrough' ||
+            tool === 'intersection' ||
+            isPowerTool(tool)
               ? overlay.pieceGhost
               : null,
           focus: focusRef.current,
         },
       );
     });
-  }, [shown, size, flowView, showArrows, showLabels, selection, preview, overlay, tool]);
+  }, [shown, size, flowView, showArrows, showLabels, showPower, selection, preview, overlay, tool]);
   useEffect(draw, [draw]);
 
   useEffect(() => {
@@ -593,6 +602,22 @@ export function GameLayoutCanvas({ view, doc }: Props) {
       case 'intersection':
         setDoc(addIntersection(curDoc(), tx, ty));
         return;
+      case 'hv':
+      case 'mv':
+      case 'transformer':
+      case 'grid': {
+        const [w, h] = pieceSize(st.tool, st.pieceRot);
+        setDoc(
+          addPowerPiece(
+            curDoc(),
+            st.tool,
+            tx - Math.floor(w / 2),
+            ty - Math.floor(h / 2),
+            st.pieceRot,
+          ),
+        );
+        return;
+      }
     }
   };
 
@@ -648,9 +673,21 @@ export function GameLayoutCanvas({ view, doc }: Props) {
       ov.ghosts = [{ shape, x, y, ok: fits(shape, x, y, new Set()) }];
     } else if (
       !gs &&
-      (st.tool === 'valve' || st.tool === 'passthrough' || st.tool === 'intersection')
+      (st.tool === 'valve' ||
+        st.tool === 'passthrough' ||
+        st.tool === 'intersection' ||
+        isPowerTool(st.tool))
     ) {
-      if (st.tool === 'valve') {
+      if (isPowerTool(st.tool)) {
+        const [w, h] = pieceSize(st.tool, st.pieceRot);
+        ov.pieceGhost = {
+          kind: 'power',
+          power: st.tool,
+          x: tx - Math.floor(w / 2),
+          y: ty - Math.floor(h / 2),
+          rot: st.pieceRot,
+        };
+      } else if (st.tool === 'valve') {
         const g = valveGeometry({ x: tx, y: ty, rot: st.pieceRot });
         ov.pieceGhost = {
           kind: 'valve',
@@ -761,7 +798,13 @@ export function GameLayoutCanvas({ view, doc }: Props) {
         }));
       } else if (k === 'r') {
         if (st.placing) st.setPlacing({ ...st.placing, rot: (st.placing.rot + 1) % 4 });
-        else if (st.tool === 'valve' || st.tool === 'passthrough') st.rotatePiece();
+        else if (
+          st.tool === 'valve' ||
+          st.tool === 'passthrough' ||
+          st.tool === 'mv' ||
+          st.tool === 'transformer'
+        )
+          st.rotatePiece();
         else if (d && st.selection.machines.size)
           setDoc(rotateMachines(d, view.ctx, st.selection.machines));
       } else if ((k === 'delete' || k === 'backspace') && d && selectionSize(st.selection)) {
@@ -777,6 +820,10 @@ export function GameLayoutCanvas({ view, doc }: Props) {
       else if (k === 'q') st.setTool('valve');
       else if (k === 't') st.setTool('passthrough');
       else if (k === 'i') st.setTool('intersection');
+      else if (k === 'h') st.setTool('hv');
+      else if (k === 'm') st.setTool('mv');
+      else if (k === 'k') st.setTool('transformer');
+      else if (k === 'g') st.setTool('grid');
       else return;
       ev.preventDefault();
     };

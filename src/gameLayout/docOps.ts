@@ -2,8 +2,10 @@
  * Immutable edits of the in-game layout document. Every function returns a new document (or
  * the same one when nothing changed), so documents can be kept as undo snapshots.
  */
+import { pieceTiles as powerTiles } from './engine/power';
 import type {
   DocIntersection,
+  DocPowerPiece,
   DocMachine,
   DocPassthrough,
   DocPipe,
@@ -11,7 +13,7 @@ import type {
   GameLayoutDoc,
 } from './docSchema';
 import { emptyLayoutDoc } from './docSchema';
-import { instanceShape, type LayoutContext } from './doc';
+import { instanceKey, instanceShape, type LayoutContext } from './doc';
 import { valveShape, rot, type Shape } from './engine/geometry';
 import type { Problem } from './engine/problem';
 import { key, kx, ky, type Solution } from './engine/solution';
@@ -64,6 +66,7 @@ export function moveItems(
     valves: doc.valves.map((v) => (sel.pieces.has(v.id) ? mv(v) : v)),
     passthroughs: doc.passthroughs.map((p) => (sel.pieces.has(p.id) ? mv(p) : p)),
     intersections: doc.intersections.map((p) => (sel.pieces.has(p.id) ? mv(p) : p)),
+    power: (doc.power ?? []).map((p) => (sel.pieces.has(p.id) ? mv(p) : p)),
     pipes: doc.pipes.map((p) => (sel.pipes.has(p.net) ? shiftPipe(p, dx, dy) : p)),
   };
 }
@@ -129,6 +132,7 @@ export function deleteItems(doc: GameLayoutDoc, sel: Selection): GameLayoutDoc {
     valves: doc.valves.filter((v) => !sel.pieces.has(v.id)),
     passthroughs: doc.passthroughs.filter((p) => !sel.pieces.has(p.id)),
     intersections: doc.intersections.filter((p) => !sel.pieces.has(p.id)),
+    power: (doc.power ?? []).filter((p) => !sel.pieces.has(p.id)),
   };
 }
 
@@ -140,6 +144,7 @@ export function togglePinned(doc: GameLayoutDoc, sel: Selection): GameLayoutDoc 
     ...doc.valves.filter((v) => sel.pieces.has(v.id)),
     ...doc.passthroughs.filter((p) => sel.pieces.has(p.id)),
     ...doc.intersections.filter((p) => sel.pieces.has(p.id)),
+    ...(doc.power ?? []).filter((p) => sel.pieces.has(p.id)),
   ];
   if (!items.length) return doc;
   const pin = items.some((i) => !i.pinned);
@@ -155,6 +160,7 @@ export function togglePinned(doc: GameLayoutDoc, sel: Selection): GameLayoutDoc 
     valves: doc.valves.map((v) => (sel.pieces.has(v.id) ? set(v) : v)),
     passthroughs: doc.passthroughs.map((p) => (sel.pieces.has(p.id) ? set(p) : p)),
     intersections: doc.intersections.map((p) => (sel.pieces.has(p.id) ? set(p) : p)),
+    power: (doc.power ?? []).map((p) => (sel.pieces.has(p.id) ? set(p) : p)),
   };
 }
 
@@ -299,15 +305,19 @@ export function eraseTiles(
   const valves = doc.valves.filter((v) => !inTiles(v.x, v.y) || v.pinned);
   const passthroughs = doc.passthroughs.filter((p) => !inTiles(p.x, p.y) || p.pinned);
   const intersections = doc.intersections.filter((p) => !inTiles(p.x, p.y) || p.pinned);
+  const power = (doc.power ?? []).filter(
+    (p) => p.pinned || !powerTiles(p).some(([x, y]) => inTiles(x, y)),
+  );
   if (
     !changed &&
     valves.length === doc.valves.length &&
     passthroughs.length === doc.passthroughs.length &&
-    intersections.length === doc.intersections.length
+    intersections.length === doc.intersections.length &&
+    power.length === (doc.power ?? []).length
   ) {
     return doc;
   }
-  return { ...doc, pipes, valves, passthroughs, intersections };
+  return { ...doc, pipes, valves, passthroughs, intersections, power };
 }
 
 // ------------------------------------------------------------------ pieces
@@ -342,6 +352,24 @@ export function addPassthrough(
   const d = ensureDoc(doc);
   const p: DocPassthrough = { id: newPieceId('pass'), x, y, horizontal, kind };
   return { ...d, passthroughs: [...d.passthroughs, p] };
+}
+
+export function addPowerPiece(
+  doc: GameLayoutDoc | null,
+  kind: DocPowerPiece['kind'],
+  x: number,
+  y: number,
+  rot: number,
+): GameLayoutDoc {
+  const d = ensureDoc(doc);
+  const p: DocPowerPiece = {
+    id: newPieceId(kind),
+    kind,
+    x,
+    y,
+    rot: kind === 'mv' || kind === 'transformer' ? rot : 0,
+  };
+  return { ...d, power: [...(d.power ?? []), p] };
 }
 
 export function addIntersection(doc: GameLayoutDoc | null, x: number, y: number): GameLayoutDoc {
@@ -451,7 +479,28 @@ export function docFromSolution(
   const intersections: DocIntersection[] = sol
     .intersections()
     .map((i) => ({ id: newPieceId('inter'), x: i.x, y: i.y }));
-  const doc: GameLayoutDoc = { version: 1, machines, pipes, valves, passthroughs, intersections };
+  const ids = new Map(sol.power.map((p) => [p.id, newPieceId(p.kind)]));
+  const power = sol.power.map((p) => ({
+    ...p,
+    id: ids.get(p.id)!,
+    ...(p.feed !== undefined && ids.has(p.feed) ? { feed: ids.get(p.feed)! } : {}),
+  }));
+  const powerFeeds: Record<string, string> = {};
+  for (const [ck, pid] of sol.powerAssign) {
+    const [inst, n] = ck.split('|').map(Number);
+    const id = ids.get(pid);
+    if (id !== undefined) powerFeeds[`${instanceKey(problem, inst)}|${n}`] = id;
+  }
+  const doc: GameLayoutDoc = {
+    version: 1,
+    machines,
+    pipes,
+    valves,
+    passthroughs,
+    intersections,
+    power,
+    powerFeeds,
+  };
   if (!keep) return doc;
   // pinned items of the previous document are part of the result already; keep their flags
   const pinnedM = new Set(keep.machines.filter((m) => m.pinned).map((m) => m.key));

@@ -153,6 +153,15 @@ export function GameLayoutSidebar({ model }: { model: LayoutViewModel }) {
           />
           <span>Add valves where even splits would starve machines</span>
         </label>
+        <label className={styles.check}>
+          <input
+            type="checkbox"
+            checked={options.power}
+            onChange={(e) => st().setOptions({ power: e.target.checked })}
+            disabled={generator.status === 'running'}
+          />
+          <span>Place power poles, transformers and the grid connection</span>
+        </label>
         <p className={styles.hint}>
           Generate keeps pinned machines and pipes where they are and lays out the rest around them.
         </p>
@@ -433,6 +442,10 @@ function Shortcuts() {
         </li>
         <li>
           <kbd>Q</kbd> valve · <kbd>T</kbd> passthrough · <kbd>I</kbd> intersection
+        </li>
+        <li>
+          <kbd>H</kbd> HV pole · <kbd>M</kbd> MV pole · <kbd>K</kbd> transformer · <kbd>G</kbd> grid
+          connection
         </li>
         <li>
           <kbd>R</kbd> rotate · <kbd>P</kbd> pin · <kbd>Del</kbd> delete · <kbd>F</kbd> fit

@@ -76,6 +76,8 @@ export interface LayoutOptions {
   timeBudget: number;
   valves: boolean;
   seed: number;
+  /** Place power poles, transformers and the grid connection (default on). */
+  power?: boolean;
   /** Max tiles a pipe may hop over other pipes (quantum piping), 0 = off. */
   quantumJump: number;
   config?: Partial<LayoutConfig>;

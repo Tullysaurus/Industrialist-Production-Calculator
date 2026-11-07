@@ -106,6 +106,7 @@ export function buildLayoutInput(src: LayoutSourceData): LayoutInput {
       width: p.width,
       side: p.type === 'product' ? p.side : undefined,
       product_type: p.type === 'product' ? p.product_type : undefined,
+      power_type: p.type === 'power' ? p.power_type : undefined,
     })),
   }));
   return {

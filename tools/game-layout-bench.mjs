@@ -25,6 +25,7 @@ try {
   const { buildProblem } = await server.ssrLoadModule('/src/gameLayout/engine/problem.ts');
   const { buildContext, evaluateDoc } = await server.ssrLoadModule('/src/gameLayout/doc.ts');
   const { hullStats } = await server.ssrLoadModule('/src/gameLayout/engine/hull.ts');
+  const { pieceSize } = await server.ssrLoadModule('/src/gameLayout/engine/power.ts');
   // empty tiles inside the orthogonal hull of the document (machines, pipes, pieces)
   const docHull = (doc) => {
     const tiles = new Set();
@@ -41,6 +42,10 @@ try {
     }
     for (const v of doc.valves) rect(v.x, v.y, v.rot % 2 ? 1 : 3, v.rot % 2 ? 3 : 1);
     for (const v of doc.intersections) rect(v.x, v.y, 2, 2);
+    for (const p of doc.power ?? []) {
+      const [w, h] = pieceSize(p.kind, p.rot);
+      rect(p.x, p.y, w, h);
+    }
     const xy = [...tiles].map((t) => t.split(',').map(Number));
     const x0 = Math.min(...xy.map((p) => p[0]));
     const y0 = Math.min(...xy.map((p) => p[1]));
@@ -61,6 +66,7 @@ try {
         valves: !flags.includes('--no-valves'),
         seed: flag('seed', 0),
         quantumJump: 3,
+        power: !flags.includes('--no-power'),
         pinned,
         tuning: {
           slack: flag('slack', undefined),

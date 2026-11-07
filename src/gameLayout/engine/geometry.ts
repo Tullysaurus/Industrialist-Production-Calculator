@@ -34,6 +34,14 @@ export interface Port {
   width: number;
 }
 
+/** Power connection point of a machine (tile-centre coordinates, e.g. 12.5). */
+export interface PowerPort {
+  x: number;
+  y: number;
+  type: 'HV' | 'MV';
+  direction: PortDirection;
+}
+
 export interface Rect {
   x: number;
   y: number;
@@ -51,6 +59,8 @@ export interface Shape {
   rects: Rect[];
   ports: Map<string, Port>;
   category: string;
+  /** Power connection points (HV / MV; data and logic ports are not modelled). */
+  power?: PowerPort[];
   /** Rotations 0..3 (index 0 is the shape itself). */
   rotations?: Shape[];
 }
@@ -94,7 +104,9 @@ function rotatedOnce(s: Shape): Shape {
   const ports = new Map<string, Port>();
   for (const [id, p] of s.ports) ports.set(id, rotatePort(p, h));
   void w;
-  return { id: s.id, name: s.name, w: h, h: w, rects, ports, category: s.category };
+  // a point (x, y) turns to (h - y, x) on a quarter turn clockwise
+  const power = s.power?.map((p) => ({ ...p, x: h - p.y, y: p.x }));
+  return { id: s.id, name: s.name, w: h, h: w, rects, ports, category: s.category, power };
 }
 
 /** The shape rotated k quarter turns clockwise (cached). */
@@ -135,6 +147,8 @@ export interface MachinePortData {
   width?: number;
   side?: Side;
   product_type?: PortKind;
+  /** Power ports: HV, MV, Data, Logic. */
+  power_type?: string;
 }
 
 export interface MachineData {
@@ -159,8 +173,12 @@ export function machineShape(m: MachineData): Shape {
   const w = Math.max(1, Math.round(m.size.x));
   const h = Math.max(1, Math.round(m.size.y));
   const ports = new Map<string, Port>();
+  const power: PowerPort[] = [];
   for (const p of m.ports ?? []) {
-    // power / data ports are not routed (no pole data)
+    if (p.type === 'power' && (p.power_type === 'HV' || p.power_type === 'MV')) {
+      power.push({ x: p.x, y: p.y, type: p.power_type, direction: p.direction });
+      continue;
+    }
     if (p.type !== 'product' || !p.side) continue;
     ports.set(p.id, {
       id: p.id,
@@ -179,6 +197,7 @@ export function machineShape(m: MachineData): Shape {
     rects: [{ x: 0, y: 0, w, h, label: m.name, machineId: m.id }],
     ports,
     category: m.category ?? '',
+    power,
   };
 }
 
@@ -189,6 +208,7 @@ export class Composite {
   private rects: Rect[] = [];
   private ports = new Map<string, Port>();
   private count = new Map<string, number>();
+  private power: PowerPort[] = [];
   readonly id: string;
   readonly name: string;
 
@@ -199,6 +219,8 @@ export class Composite {
 
   add(shape: Shape, x: number, y: number, keepPorts = true): void {
     for (const r of shape.rects) this.rects.push({ ...r, x: r.x + x, y: r.y + y });
+    // every part keeps its power connection (a turbine's generator, a tree farm's controller)
+    for (const p of shape.power ?? []) this.power.push({ ...p, x: p.x + x, y: p.y + y });
     if (!keepPorts) return;
     for (const [pid, p] of shape.ports) {
       const n = this.count.get(pid) ?? 0;
@@ -224,7 +246,17 @@ export class Composite {
     for (const [id, p] of this.ports) {
       ports.set(id, { ...p, cells: p.cells.map(([x, y]) => [x - minx, y - miny] as const) });
     }
-    return { id: this.id, name: this.name, w: maxx - minx, h: maxy - miny, rects, ports, category };
+    const power = this.power.map((p) => ({ ...p, x: p.x - minx, y: p.y - miny }));
+    return {
+      id: this.id,
+      name: this.name,
+      w: maxx - minx,
+      h: maxy - miny,
+      rects,
+      ports,
+      category,
+      power,
+    };
   }
 }
 

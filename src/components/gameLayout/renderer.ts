@@ -2,6 +2,7 @@
  * Canvas 2D drawing of the in-game layout: machines, ports, pipes, logistics pieces, problems,
  * selection and tool previews. Colours come from the active theme's CSS tokens.
  */
+import { pieceSize, transformerPorts, type PowerKind } from '../../gameLayout/engine/power';
 import type { DocView } from '../../gameLayout/doc';
 import { passthroughTiles, valveGeometry } from '../../gameLayout/doc';
 import type { DocValve, GameLayoutDoc } from '../../gameLayout/docSchema';
@@ -70,7 +71,9 @@ export interface Overlay {
   ghosts: { shape: Shape; x: number; y: number; ok: boolean }[];
   /** Valve / passthrough / intersection ghost. */
   pieceGhost: {
-    kind: 'valve' | 'passthrough' | 'intersection';
+    kind: 'valve' | 'passthrough' | 'intersection' | 'power';
+    /** Power piece kind (kind 'power'). */
+    power?: PowerKind;
     x: number;
     y: number;
     rot: number;
@@ -90,6 +93,8 @@ export interface DrawOptions {
   flowView: FlowView;
   showArrows: boolean;
   showLabels: boolean;
+  /** Draw power cables. */
+  showPower: boolean;
   selection: Selection;
   /** Shown instead of the document while the generator runs. */
   preview: GameLayoutDoc | null;
@@ -396,6 +401,9 @@ export function drawLayout(
     g.setLineDash([]);
   }
 
+  // ---- power: pieces, then cables on top (they run overhead)
+  drawPower(g, view, theme, s, X, Y, visible, sel.pieces, dragOf, opt.showPower);
+
   // ---- problems
   g.strokeStyle = theme.error;
   g.lineWidth = Math.max(1.5, s * 0.12);
@@ -430,6 +438,9 @@ export function drawLayout(
       for (const [tx, ty] of [vg.a, vg.m, vg.e]) g.fillRect(X(tx), Y(ty), s, s);
     } else if (pg.kind === 'passthrough') {
       const [w, h] = pg.rot % 2 ? [2, 4] : [4, 2];
+      g.fillRect(X(pg.x), Y(pg.y), w * s, h * s);
+    } else if (pg.kind === 'power' && pg.power) {
+      const [w, h] = pieceSize(pg.power, pg.rot);
       g.fillRect(X(pg.x), Y(pg.y), w * s, h * s);
     } else {
       g.fillRect(X(pg.x), Y(pg.y), 2 * s, 2 * s);
@@ -555,6 +566,85 @@ function drawRoutes(
     path();
     g.stroke();
   });
+  g.restore();
+}
+
+function drawPower(
+  g: CanvasRenderingContext2D,
+  view: DocView,
+  theme: Theme,
+  s: number,
+  X: (x: number) => number,
+  Y: (y: number) => number,
+  visible: (x0: number, y0: number, x1: number, y1: number) => boolean,
+  selected: Set<string>,
+  dragOf: (selected: boolean) => { dx: number; dy: number },
+  cables: boolean,
+): void {
+  const pieces = view.doc.power ?? [];
+  if (!pieces.length) return;
+  const hv = theme.warning;
+  const mv = theme.success;
+  const fontPx = (n: number) => `${Math.round(n)}px system-ui, sans-serif`;
+  for (const p of pieces) {
+    const [w, h] = pieceSize(p.kind, p.rot);
+    const { dx, dy } = dragOf(selected.has(p.id));
+    if (!visible(p.x + dx, p.y + dy, p.x + dx + w, p.y + dy + h)) continue;
+    const col = p.kind === 'mv' ? mv : hv;
+    g.globalAlpha = 0.9;
+    g.fillStyle = theme.machine;
+    g.fillRect(X(p.x + dx), Y(p.y + dy), w * s, h * s);
+    g.globalAlpha = 1;
+    g.lineWidth = Math.max(1, s * 0.15);
+    g.strokeStyle = selected.has(p.id) ? theme.primary : col;
+    g.strokeRect(X(p.x + dx), Y(p.y + dy), w * s, h * s);
+    if (p.kind === 'transformer') {
+      // MV and HV ends
+      const { mv: m, hv: hh } = transformerPorts({ ...p, x: p.x + dx, y: p.y + dy });
+      for (const [[px, py], c] of [
+        [m, mv],
+        [hh, hv],
+      ] as const) {
+        g.fillStyle = c;
+        g.beginPath();
+        g.arc(X(px), Y(py), Math.max(2, s * 0.45), 0, Math.PI * 2);
+        g.fill();
+      }
+    }
+    if (s * Math.min(w, h) >= 14) {
+      const label =
+        p.kind === 'hv'
+          ? 'HV'
+          : p.kind === 'mv'
+            ? 'MV'
+            : p.kind === 'transformer'
+              ? 'HV/MV'
+              : 'GRID';
+      g.fillStyle = col;
+      g.font = fontPx(Math.min(s * Math.min(w, h) * 0.4, s * 2.5));
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(label, X(p.x + dx + w / 2), Y(p.y + dy + h / 2));
+    }
+  }
+  const pr = view.sol.powerResult;
+  if (!cables || !pr) return;
+  g.save();
+  g.lineCap = 'round';
+  for (const l of pr.links) {
+    const [ax, ay] = l.a;
+    const [bx, by] = l.b;
+    if (!visible(Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by))) continue;
+    const machine = l.to < 0;
+    g.strokeStyle = l.type === 'HV' ? hv : mv;
+    g.globalAlpha = machine ? 0.55 : 0.9;
+    g.lineWidth = Math.max(1, s * (machine ? 0.08 : 0.18));
+    g.setLineDash(machine ? [Math.max(2, s * 0.3), Math.max(2, s * 0.25)] : []);
+    g.beginPath();
+    g.moveTo(X(ax), Y(ay));
+    g.lineTo(X(bx), Y(by));
+    g.stroke();
+  }
   g.restore();
 }
 

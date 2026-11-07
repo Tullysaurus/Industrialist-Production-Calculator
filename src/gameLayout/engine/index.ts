@@ -15,6 +15,7 @@ import type { Solution } from './solution';
 import { optimize, type PinnedSpec } from './optimize';
 import { placeValves } from './valves';
 import { now } from './clock';
+import { pieceTiles as powerTiles } from './power';
 import { key, kx, ky } from './solution';
 import type { LayoutInput, LayoutOptions, LayoutPhase, LayoutRunResult } from './types';
 
@@ -127,7 +128,11 @@ function toDoc(
     const all = {
       machines: new Set(doc.machines.map((m) => m.key)),
       pipes: new Set(doc.pipes.map((p) => p.net)),
-      pieces: new Set([...doc.valves, ...doc.passthroughs, ...doc.intersections].map((p) => p.id)),
+      pieces: new Set(
+        [...doc.valves, ...doc.passthroughs, ...doc.intersections, ...(doc.power ?? [])].map(
+          (p) => p.id,
+        ),
+      ),
     };
     doc = moveItems(doc, all, anchor.x - now_.x, anchor.y - now_.y);
   }
@@ -137,11 +142,22 @@ function toDoc(
   const pp = pinned.passthroughs.filter((v) => v.pinned);
   const pi = pinned.intersections.filter((v) => v.pinned);
   const taken = new Set([...pv, ...pp, ...pi].map(at));
+  const pinnedPower = (pinned.power ?? []).filter((p) => p.pinned);
+  const pinnedPowerTiles = new Set(
+    pinnedPower.flatMap((p) => powerTiles(p).map(([x, y]) => `${x},${y}`)),
+  );
   return {
     ...doc,
     valves: [...doc.valves.filter((v) => !taken.has(at(v))), ...pv],
     passthroughs: [...doc.passthroughs.filter((v) => !taken.has(at(v))), ...pp],
     intersections: [...doc.intersections.filter((v) => !taken.has(at(v))), ...pi],
+    // pinned power pieces stay; generated ones on their tiles go
+    power: [
+      ...(doc.power ?? []).filter(
+        (p) => !powerTiles(p).some(([x, y]) => pinnedPowerTiles.has(`${x},${y}`)),
+      ),
+      ...pinnedPower,
+    ],
   };
 }
 
@@ -186,6 +202,7 @@ export function runLayout(
     slack: options.tuning?.slack ?? 1,
     stallLimit: options.tuning?.stallLimit,
     seams: options.tuning?.seams ?? true,
+    power: options.power ?? true,
     hullCost: options.tuning?.hullCost ?? true,
     notchWeight: options.tuning?.notchWeight ?? 0.1,
     log,

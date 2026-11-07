@@ -64,6 +64,18 @@ export interface DocIntersection {
   pinned?: boolean;
 }
 
+/** Power piece: HV pole (12x12), MV pole (2x1), HV transformer (8x8), grid connection (2x2). */
+export interface DocPowerPiece {
+  id: string;
+  kind: 'hv' | 'mv' | 'transformer' | 'grid';
+  x: number;
+  y: number;
+  rot: number;
+  /** Id of the piece it takes its power from. */
+  feed?: string;
+  pinned?: boolean;
+}
+
 export interface GameLayoutDoc {
   version: 1;
   machines: DocMachine[];
@@ -71,6 +83,13 @@ export interface GameLayoutDoc {
   valves: DocValve[];
   passthroughs: DocPassthrough[];
   intersections: DocIntersection[];
+  /** Power poles, transformers and the grid connection (missing in older saves). */
+  power?: DocPowerPiece[];
+  /**
+   * Which pole feeds each machine power connection: `${machine key}|${n}` -> power piece id
+   * (kept as laid out while still valid; capacity is counted in this order).
+   */
+  powerFeeds?: Record<string, string>;
 }
 
 export function emptyLayoutDoc(): GameLayoutDoc {
@@ -182,5 +201,35 @@ export function normalizeLayoutDoc(value: unknown): GameLayoutDoc {
       ...pin(p),
     } satisfies DocIntersection;
   });
-  return { version: 1, machines, pipes, valves, passthroughs, intersections };
+  const power = arr(d.power ?? [], 'power').map((raw, i) => {
+    const p = rec(raw, `power[${i}]`);
+    if (p.kind !== 'hv' && p.kind !== 'mv' && p.kind !== 'transformer' && p.kind !== 'grid')
+      fail(`power[${i}].kind`, 'must be hv, mv, transformer or grid');
+    return {
+      id: str(p.id, `power[${i}].id`),
+      kind: p.kind,
+      x: int(p.x, `power[${i}].x`),
+      y: int(p.y, `power[${i}].y`),
+      rot: ((int(p.rot ?? 0, `power[${i}].rot`) % 4) + 4) % 4,
+      ...(typeof p.feed === 'string' ? { feed: str(p.feed, `power[${i}].feed`) } : {}),
+      ...pin(p),
+    } satisfies DocPowerPiece;
+  });
+  const powerFeeds: Record<string, string> = {};
+  if (d.powerFeeds !== undefined) {
+    for (const [k, v] of Object.entries(rec(d.powerFeeds, 'powerFeeds'))) {
+      powerFeeds[str(k, 'powerFeeds key')] = str(v, `powerFeeds.${k}`);
+    }
+  }
+  return {
+    version: 1,
+    machines,
+    pipes,
+    valves,
+    passthroughs,
+    intersections,
+    // older saves have no power: keep the document as it was
+    ...(d.power !== undefined ? { power } : {}),
+    ...(d.powerFeeds !== undefined ? { powerFeeds } : {}),
+  };
 }
