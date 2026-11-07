@@ -417,6 +417,13 @@ test('power: reach, capacity and the grid are checked', async () => {
     pieces,
   );
   assert.ok(r.problems.some((p) => p.code === 'power-overload'));
+  // a machine above one node's rating draws from several nodes of its pole
+  r = PW.solvePower([consumer('0|0', [55, 0.5], 'MV', 3e6)], pieces);
+  assert.deepEqual(r.problems, []);
+  assert.deepEqual(
+    r.nodeUse[pieces.indexOf(mv)].filter((u) => u > 0),
+    [1.5e6, 1.5e6],
+  );
   // no grid connection: nothing is powered
   r = PW.solvePower([consumer('0|0', [61, 0.5], 'MV', 1)], [hv, tr, mv]);
   assert.ok(r.problems.some((p) => p.code === 'no-grid'));

@@ -236,7 +236,11 @@ export class Ledger {
     while (cur >= 0) {
       const sp = this.spec(cur);
       if (sp) {
-        if (nd < 0) {
+        if (cur === i) {
+          // a machine's cable may draw from several nodes of its pole
+          const room = this.nodeUse[cur].reduce((r, u) => r + Math.max(0, sp.rating - u), 0);
+          if (room + 1e-6 < a) return false;
+        } else if (nd < 0) {
           if (!this.nodeUse[cur].some((u) => u + a <= sp.rating + 1e-6)) return false;
         } else if (this.nodeUse[cur][nd] + a > sp.rating + 1e-6) {
           return false;
@@ -261,7 +265,24 @@ export class Ledger {
     while (cur >= 0) {
       const sp = this.spec(cur);
       this.load[cur] += a;
-      if (sp) {
+      if (sp && cur === i) {
+        // the machine's own pole: one node when it fits, else spread over the emptiest nodes
+        const use = this.nodeUse[cur];
+        const one = use.findIndex((u) => u + a <= sp.rating + 1e-6);
+        if (one >= 0) {
+          use[one] += a;
+        } else {
+          let left = a;
+          const order = use.map((_u, k) => k).sort((p, q) => use[p] - use[q]);
+          for (const k of order) {
+            const take = Math.min(left, Math.max(0, sp.rating - use[k]));
+            use[k] += take;
+            left -= take;
+          }
+          // forced: what does not fit goes on the emptiest node
+          if (left > 1e-9) use[order[0]] += left;
+        }
+      } else if (sp) {
         if (nd < 0) {
           const use = this.nodeUse[cur];
           nd = use.findIndex((u) => u + a <= sp.rating + 1e-6);
@@ -786,9 +807,11 @@ export function planPower(problem: Problem, sol: Solution, keep: PowerPiece[] = 
   const addTransformer = (target: readonly [number, number], amount: number): boolean => {
     const n = TRANSFORMER.size;
     let best: { x: number; y: number; r: number; feeder: number; d: number } | null = null;
+    let room = false;
     for (let y = Math.floor(target[1] - 2 * R_MV - n); y <= target[1] + 2 * R_MV; y += 1) {
       for (let x = Math.floor(target[0] - 2 * R_MV - n); x <= target[0] + 2 * R_MV; x += 1) {
         if (!fm.free(x, y, n, n)) continue;
+        room = true;
         for (let r = 0; r < 4; r++) {
           const ports = transformerPorts({ id: '', kind: 'transformer', x, y, rot: r });
           const d = dist(ports.mv, target);
@@ -800,7 +823,9 @@ export function planPower(problem: Problem, sol: Solution, keep: PowerPiece[] = 
       }
     }
     if (!best) {
-      // bring the HV network close enough for a transformer first
+      // no room for a transformer here: the layout has to make room (corridor widening)
+      if (!room) return false;
+      // room, but no HV pole with spare capacity in reach: bring the HV network closer first
       return hvPathTo(target, R_HV + 2 * R_MV, amount / (1 - TRANSFORMER.loss));
     }
     place({ id: newId('transformer'), kind: 'transformer', x: best.x, y: best.y, rot: best.r });
@@ -905,7 +930,11 @@ export function planPower(problem: Problem, sol: Solution, keep: PowerPiece[] = 
         }
       }
     }
-    if (!best) return mvPathTo(c.at, c.load) || addTransformer(c.at, Math.max(c.load, 1));
+    if (!best) {
+      // a relay chain hangs off single nodes: no use for a machine above one node's rating
+      if (c.load <= POLE.MV.rating && mvPathTo(c.at, c.load)) return true;
+      return addTransformer(c.at, Math.max(c.load, 1));
+    }
     place({ id: newId('mv'), kind: 'mv', x: best.x, y: best.y, rot: best.r });
     attach(pieces.length - 1, best.feeder);
     return true;

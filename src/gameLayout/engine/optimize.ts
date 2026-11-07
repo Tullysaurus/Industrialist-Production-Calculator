@@ -20,7 +20,7 @@ import { Router, type RouterNet } from './router';
 import { key, kx, ky, Solution, type SolMachine } from './solution';
 import { now } from './clock';
 import { seamCompact } from './seams';
-import { planPower, powerConsumers } from './power';
+import { planPower, POLE, powerConsumers } from './power';
 
 /** Free border around the placement so pipes can run around the outside. */
 const MARGIN = 4;
@@ -556,11 +556,13 @@ export function optimize(problem: Problem, o: OptimizeOptions): Solution {
         `  power: ${[...kinds].map(([k, n]) => `${n} ${k}`).join(', ')}` +
           (plan.result.problems.length ? `, ${plan.result.problems.length} problem(s)` : ''),
       );
-      if (plan.unpowered.size && powerGrows < 4) {
+      if (plan.unpowered.size && powerGrows < 8) {
         for (const c of powerConsumers(problem, sol.machines)) {
           if (!plan.unpowered.has(c.inst)) continue;
-          // an HV pole needs 12x12 tiles, an MV pole 2x1
-          powerShort.push([Math.floor(c.at[0]), Math.floor(c.at[1]), c.type === 'HV' ? 12 : 3]);
+          // an HV pole needs 12x12 tiles, an MV pole 2x1; an MV machine above one node's
+          // rating needs a pole straight off a transformer (8x8) close by
+          const step = c.type === 'HV' ? 12 : c.load > POLE.MV.rating ? 9 : 3;
+          powerShort.push([Math.floor(c.at[0]), Math.floor(c.at[1]), step]);
         }
       }
     }

@@ -73,8 +73,9 @@ the flowchart changes (new machines appear as unplaced, removed ones are flagged
   without coolant) and one external HV grid connection on the edge of the layout, so every
   machine with a power connection is on a pole of its voltage with enough capacity on the way.
   Node positions on the poles are not in the game data, so every connection keeps a margin
-  (12 tiles on HV, 4 on MV). A node feeds any number of cables up to its rating; a cable to a
-  downstream pole counts its whole load on the node it hangs from. Poles that do not fit get
+  (12 tiles on HV, 4 on MV). A node feeds any number of cables up to its rating, and a machine
+  that needs more than one node draws from several nodes of its pole; a cable to a downstream
+  pole counts its whole load on the node it hangs from. Poles that do not fit get
   room by widening the corridors next to the machines that need them. Poles can also be placed
   by hand (H, M, K, G); the Power button shows or hides the cables.
 - **Rules checked** (Problems list): overlaps, pipes under machines, unconnected ports, at most
