@@ -1,6 +1,7 @@
 import type { DocView } from '../../gameLayout/doc';
 import { edgeKey } from '../../gameLayout/engine/flows';
 import { key } from '../../gameLayout/engine/solution';
+import { describeSides, pieceRoutes, sharedTileRoutes } from '../../gameLayout/junctionRoutes';
 import { useGameLayoutStore } from '../../stores/useGameLayoutStore';
 import { useUIStore } from '../../stores/useUIStore';
 import { formatRate } from './format';
@@ -61,7 +62,25 @@ export function TileTooltip({ view, hit, tile, px, py }: Props) {
       });
     else if (view.doc.passthroughs.some((x) => x.id === piece))
       lines.push({ label: 'Large pipe passthrough' });
-    else lines.push({ label: 'Large pipe intersection' });
+    else {
+      lines.push({ label: 'Large pipe intersection' });
+      const it = view.doc.intersections.find((x) => x.id === piece);
+      if (it) {
+        for (const r of pieceRoutes(view.sol, it.x, it.y)) {
+          lines.push({ label: P.nets[r.net].label, detail: describeSides(r.sides), tone: 'fluid' });
+        }
+      }
+    }
+  } else {
+    // two normal pipes sharing the tile: where each one goes
+    for (const r of sharedTileRoutes(view.sol, t)) {
+      const net = P.nets[r.net];
+      lines.push({
+        label: `${net.label} through this tile`,
+        detail: describeSides(r.sides),
+        tone: net.kind === 'Fluid' ? 'fluid' : 'item',
+      });
+    }
   }
   for (const pr of view.problems) {
     if (pr.severity === 'error' && pr.tiles.some(([x, y]) => x === tile[0] && y === tile[1])) {

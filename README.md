@@ -65,7 +65,9 @@ the flowchart changes (new machines appear as unplaced, removed ones are flagged
   elongated layouts cost a little extra, which keeps the shape compact). Pinned machines and pipes form a fixed block the rest is laid out around. It
   runs in a Web Worker, shows its best layout while it works and can be stopped at any time.
 - **Rules checked** (Problems list): overlaps, pipes under machines, unconnected ports, at most
-  two normal pipes per tile, large pipes only crossing at a 2x2 intersection, normal pipes only
+  two normal pipes per tile, large pipes only crossing at a 2x2 intersection (each pipe through
+  its own sides of the piece, straight across or turning a corner; the viewer draws each pipe's
+  path through the piece, and through tiles two normal pipes cross on), normal pipes only
   crossing large pipes through a 4x2 passthrough on a straight run, quantum hops only over
   normal pipes, valve placement, the mineshaft drill spacing rule, and an even-split simulation
   of every pipe split (valves at their set percentages).

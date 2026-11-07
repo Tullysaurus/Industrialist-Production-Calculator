@@ -203,3 +203,113 @@ test('seam carving keeps a routed layout valid and never adds empty space', asyn
   assert.ok(carved.cost <= sol.cost);
   assert.equal(carved.machines.length, sol.machines.length);
 });
+
+/** Engine input for a small power plant save: three large pipe networks that must cross. */
+function powerPlantInput() {
+  const node = (id, recipeId, machineCount) => ({
+    id,
+    type: 'recipe',
+    recipeId,
+    machineCount,
+    position: { x: 0, y: 0 },
+    settings: {},
+  });
+  const edge = (id, source, sourceIndex, target, targetIndex) => ({
+    id,
+    source,
+    sourceIndex,
+    target,
+    targetIndex,
+  });
+  const nodes = [
+    node('drill', 'r_coal_drill_01', 16),
+    node('cpp', 'r_coal_power_plant_01', 2),
+    node('tower', 'r_cooling_tower_01', 4),
+    node('stack', 'r_exhaust_stack_02', 3),
+  ];
+  const edges = [
+    edge('e1', 'drill', 0, 'cpp', 0),
+    edge('e2', 'cpp', 0, 'tower', 0),
+    edge('e3', 'tower', 0, 'cpp', 1),
+    edge('e4', 'cpp', 1, 'stack', 0),
+  ];
+  return powerInputFrom(nodes, edges);
+}
+
+async function powerInputFrom(rawNodes, rawEdges) {
+  const save = JSON.parse(
+    await readFile(new URL('../src/tutorials/Gearbox_Tutorial_save.json', import.meta.url), 'utf8'),
+  );
+  const data = { ...save.data, nodes: rawNodes, edges: rawEdges };
+  const { nodes, edges, globalSettings } = deserializeCanvas(data);
+  const res = solveFlowPipeline(nodes, edges, globalSettings);
+  return buildLayoutInput({
+    nodes,
+    edges,
+    ...res,
+    machines: lookup.getAllMachines(),
+    products: lookup.getAllProducts(),
+    isSpecialRecipe: (id) => !!getSpecialRecipe(id),
+  });
+}
+
+test('large pipes may turn inside an intersection, each through its own sides', async () => {
+  const { Solution, key } = await viteServer.ssrLoadModule('/src/gameLayout/engine/solution.ts');
+  const { pieceRoutes } = await viteServer.ssrLoadModule('/src/gameLayout/junctionRoutes.ts');
+  const problem = buildProblem(await powerPlantInput());
+  const [A, B] = problem.nets.map((n, i) => (n.large ? i : -1)).filter((i) => i >= 0);
+  const build = (bExtra) => {
+    const nodes = problem.nets.map(() => new Set());
+    const edges = problem.nets.map(() => []);
+    const chain = (ni, pts) =>
+      pts.forEach((p, i) => {
+        nodes[ni].add(key(...p));
+        if (i) edges[ni].push(key(...pts[i - 1]), key(...p), 0);
+      });
+    // A comes down from the top and turns right inside the piece at (10, 10)
+    const pa = [];
+    for (let y = 4; y <= 10; y++) pa.push([10, y]);
+    for (let x = 11; x <= 16; x++) pa.push([x, 10]);
+    chain(A, pa);
+    // B comes in from the left and leaves at the bottom (or, broken, at the top)
+    const pb = [];
+    for (let x = 4; x <= 8; x++) pb.push([x, 10]);
+    chain(B, pb);
+    bExtra(chain, edges[B]);
+    return new Solution(problem, [], nodes, edges, [], 3);
+  };
+  const ok = build((chain, eb) => {
+    const out = [];
+    for (let y = 12; y <= 16; y++) out.push([10, y]);
+    chain(B, out);
+    eb.push(key(8, 10), key(10, 12), 3); // corner crossing: piece at (x of end, y of start)
+  });
+  assert.deepEqual(ok.badIntersections(), []);
+  assert.deepEqual(ok.overfull(), []);
+  assert.deepEqual(
+    ok.validate(50).filter((e) => !e.includes('not connected')),
+    [],
+    'a curved crossing is a valid segment',
+  );
+  assert.deepEqual(ok.intersections(), [{ x: 10, y: 10, nets: [A, B].sort((a, b) => a - b) }]);
+  const sides = new Map(pieceRoutes(ok, 10, 10).map((r) => [r.net, r.sides]));
+  assert.deepEqual(sides.get(A), [0, 3], 'A: right and top');
+  assert.deepEqual(sides.get(B), [1, 2], 'B: left and bottom');
+  // B leaving through the top as well shares a side with A: not allowed
+  const bad = build((chain, eb) => {
+    const out = [];
+    for (let y = 8; y >= 2; y--) out.push([10, y]);
+    chain(B, out);
+    eb.push(key(8, 10), key(10, 8), 3);
+  });
+  assert.ok(bad.overfull().length > 0);
+});
+
+test('a power plant with crossing large pipes is routed without editor errors', async () => {
+  const pInput = await powerPlantInput();
+  const res = runLayout(pInput, { timeBudget: 15, valves: false, seed: 1, quantumJump: 3 });
+  assert.equal(res.summary.fullyRouted, true);
+  const view = D.evaluateDoc(D.buildContext(buildProblem(pInput)), res.doc);
+  assert.equal(errorsOf(view).length, 0, JSON.stringify(errorsOf(view).slice(0, 3)));
+  assert.ok(res.doc.intersections.length > 0, 'the large pipes cross through intersection pieces');
+});

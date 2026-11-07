@@ -9,6 +9,7 @@ import type { DocPassthrough, GameLayoutDoc } from './docSchema';
 import { addIntersection, addPassthrough, pipeGraph, setPipe, type PipeGraph } from './docOps';
 import { accessCells, largeAnchor, occupied } from './engine/geometry';
 import { EDGE_LCROSS, Router, type RouterNet } from './engine/router';
+import { lcrossMid } from './engine/intersection';
 import { key, kx, ky } from './engine/solution';
 import { now } from './engine/clock';
 
@@ -149,7 +150,7 @@ function addMissingPieces(doc: GameLayoutDoc, grid: EditorGrid, nets: Set<number
     const e = grid.router.edges[ni];
     for (let i = 0; i < e.length; i += 3) {
       if (e[i + 2] !== EDGE_LCROSS) continue;
-      const mid = grid.fromGrid(e[i] + (e[i + 1] - e[i]) / 2);
+      const mid = grid.fromGrid(lcrossMid(e[i], e[i + 1], grid.gw));
       if (have.has(mid)) continue;
       have.add(mid);
       d = addIntersection(d, kx(mid), ky(mid));

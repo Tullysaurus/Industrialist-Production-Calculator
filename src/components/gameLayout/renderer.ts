@@ -9,7 +9,14 @@ import type { Selection } from '../../gameLayout/docOps';
 import { edgeKey } from '../../gameLayout/engine/flows';
 import type { Shape } from '../../gameLayout/engine/geometry';
 import { EDGE_CROSS, EDGE_HOP, EDGE_LCROSS } from '../../gameLayout/engine/router';
-import { kx, ky } from '../../gameLayout/engine/solution';
+import { lcrossMid } from '../../gameLayout/engine/intersection';
+import { KX, kx, ky } from '../../gameLayout/engine/solution';
+import {
+  pieceRoutes,
+  sharedTileRoutes,
+  sharedTiles,
+  type JunctionRoute,
+} from '../../gameLayout/junctionRoutes';
 import type { FlowView } from '../../stores/useGameLayoutStore';
 
 export interface Camera {
@@ -182,13 +189,22 @@ export function drawLayout(
       g.moveTo(X(kx(e[i]) + dx + off), Y(ky(e[i]) + dy + off));
       g.lineTo(X(kx(e[i + 1]) + dx + off), Y(ky(e[i + 1]) + dy + off));
     }
+    // through an intersection piece: in to the middle of the piece and out (the piece draws
+    // the actual path inside it on top)
+    for (let i = 0; i < e.length; i += 3) {
+      if (e[i + 2] !== EDGE_LCROSS) continue;
+      const f = lcrossMid(e[i], e[i + 1], KX);
+      g.moveTo(X(kx(e[i]) + dx + off), Y(ky(e[i]) + dy + off));
+      g.lineTo(X(kx(f) + dx + 1), Y(ky(f) + dy + 1));
+      g.lineTo(X(kx(e[i + 1]) + dx + off), Y(ky(e[i + 1]) + dy + off));
+    }
     g.stroke();
-    // hops, passthrough crossings and intersections: dashed
+    // hops and passthrough crossings: dashed
     g.setLineDash([Math.max(2, s * 0.4), Math.max(2, s * 0.3)]);
     g.beginPath();
     for (let i = 0; i < e.length; i += 3) {
       const k = e[i + 2];
-      if (k !== EDGE_HOP && k !== EDGE_CROSS && k !== EDGE_LCROSS) continue;
+      if (k !== EDGE_HOP && k !== EDGE_CROSS) continue;
       g.moveTo(X(kx(e[i]) + dx + off), Y(ky(e[i]) + dy + off));
       g.lineTo(X(kx(e[i + 1]) + dx + off), Y(ky(e[i + 1]) + dy + off));
     }
@@ -261,17 +277,46 @@ export function drawLayout(
     g.stroke();
     void passthroughTiles;
   }
+  // which pipe goes where: each pipe's path through the piece / shared tile, the second one
+  // with a halo so two paths never read as joined
+  const routeStyle = (ni: number, base: number, k: number) => {
+    const net = P.nets[ni];
+    const selected = sel.pipes.has(net.key) || ov.activeNet === ni;
+    return {
+      color: selected ? theme.primary : net.kind === 'Fluid' ? theme.fluid : theme.item,
+      alpha: ov.activeNet !== null && ov.activeNet !== ni ? 0.35 : 1,
+      width: base,
+      halo: k > 0,
+    };
+  };
   for (const it of doc.intersections) {
     const { dx, dy } = dragOf(sel.pieces.has(it.id));
     if (!visible(it.x, it.y, it.x + 2, it.y + 2)) continue;
+    g.fillStyle = theme.machine;
+    g.fillRect(X(it.x + dx), Y(it.y + dy), 2 * s, 2 * s);
+    g.lineWidth = Math.max(1, s * 0.12);
     g.strokeStyle = sel.pieces.has(it.id) ? theme.primary : theme.machineBorder;
     g.strokeRect(X(it.x + dx), Y(it.y + dy), 2 * s, 2 * s);
-    g.beginPath();
-    g.moveTo(X(it.x + dx), Y(it.y + dy));
-    g.lineTo(X(it.x + dx + 2), Y(it.y + dy + 2));
-    g.moveTo(X(it.x + dx + 2), Y(it.y + dy));
-    g.lineTo(X(it.x + dx), Y(it.y + dy + 2));
-    g.stroke();
+    const routes = pieceRoutes(view.sol, it.x, it.y);
+    drawRoutes(g, X(it.x + dx), Y(it.y + dy), 2 * s, routes, theme, (ni, k) =>
+      routeStyle(ni, s * 0.75, k),
+    );
+  }
+  g.lineWidth = Math.max(1, s * 0.12);
+  if (s >= 8) {
+    for (const c of sharedTiles(view.sol)) {
+      const x = kx(c);
+      const y = ky(c);
+      if (!visible(x, y, x + 1, y + 1)) continue;
+      const routes = sharedTileRoutes(view.sol, c);
+      // only where the two pipes cross (no common side); side by side runs stay as drawn
+      if (routes.length !== 2 || routes[0].sides.some((k) => routes[1].sides.includes(k))) continue;
+      const moved = routes.some((r) => sel.pipes.has(P.nets[r.net].key)) && ov.drag;
+      if (moved) continue;
+      g.fillStyle = theme.bg;
+      g.fillRect(X(x), Y(y), s, s);
+      drawRoutes(g, X(x), Y(y), s, routes, theme, (ni, k) => routeStyle(ni, s * 0.3, k));
+    }
   }
   for (const v of doc.valves)
     drawValve(
@@ -432,6 +477,85 @@ export function drawLayout(
     g.strokeRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0));
     g.setLineDash([]);
   }
+}
+
+/**
+ * Pipe paths inside a square box (pixels, top-left px / py, side `size`): straight across,
+ * a quarter arc around the corner between two neighbouring sides, or spokes to the middle
+ * (a pipe splitting / merging inside). Pipes using the same sides are drawn side by side.
+ */
+function drawRoutes(
+  g: CanvasRenderingContext2D,
+  px: number,
+  py: number,
+  size: number,
+  routes: JunctionRoute[],
+  theme: Theme,
+  style: (net: number, k: number) => { color: string; alpha: number; width: number; halo: boolean },
+): void {
+  const h = size / 2;
+  const mid: [number, number][] = [
+    [px + size, py + h],
+    [px, py + h],
+    [px + h, py + size],
+    [px + h, py],
+  ];
+  // two pipes using a common side run side by side: draw them apart
+  const same =
+    routes.length === 2 && routes[0].sides.some((k) => routes[1].sides.includes(k))
+      ? size * 0.18
+      : 0;
+  g.save();
+  g.lineCap = 'butt';
+  routes.forEach((r, k) => {
+    const st = style(r.net, k);
+    const shift = same ? (k ? same : -same) : 0;
+    const path = () => {
+      g.beginPath();
+      const [a, b] = r.sides;
+      if (r.sides.length === 2 && (a ^ 1) === b) {
+        // straight across (sides 0/1 or 2/3)
+        const horizontal = a === 0;
+        const [x1, y1] = mid[a];
+        const [x2, y2] = mid[b];
+        const ox = horizontal ? 0 : shift;
+        const oy = horizontal ? shift : 0;
+        g.moveTo(x1 + ox, y1 + oy);
+        g.lineTo(x2 + ox, y2 + oy);
+      } else if (r.sides.length === 2) {
+        // around the corner between the two sides
+        const right = r.sides.includes(0);
+        const bottom = r.sides.includes(2);
+        const cx = right ? px + size : px;
+        const cy = bottom ? py + size : py;
+        const rad = Math.max(1, h + shift);
+        const angle = (k2: number) => Math.atan2(mid[k2][1] - cy, mid[k2][0] - cx);
+        const a0 = angle(a);
+        let d = angle(b) - a0;
+        while (d > Math.PI) d -= 2 * Math.PI;
+        while (d < -Math.PI) d += 2 * Math.PI;
+        const start = d < 0 ? a0 + d : a0;
+        g.arc(cx, cy, rad, start, start + Math.abs(d));
+      } else {
+        for (const sd of r.sides) {
+          g.moveTo(mid[sd][0] + shift, mid[sd][1] + shift);
+          g.lineTo(px + h + shift, py + h + shift);
+        }
+      }
+    };
+    g.globalAlpha = st.alpha;
+    if (st.halo) {
+      g.strokeStyle = theme.bg;
+      g.lineWidth = st.width + Math.max(2, size * 0.12);
+      path();
+      g.stroke();
+    }
+    g.strokeStyle = st.color;
+    g.lineWidth = Math.max(1, st.width);
+    path();
+    g.stroke();
+  });
+  g.restore();
 }
 
 function degreeOf(view: DocView, ni: number, c: number): number {

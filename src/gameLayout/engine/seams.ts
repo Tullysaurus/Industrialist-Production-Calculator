@@ -393,6 +393,12 @@ function apply(sol: Solution, g: Grid, s: Int32Array): Solution | null {
         es.push(na, nb, kind);
         continue;
       }
+      if (kind === EDGE_LCROSS) {
+        // through an intersection piece: both ends must move together (the piece is rigid)
+        if (na - a !== nb - b) return null;
+        es.push(na, nb, kind);
+        continue;
+      }
       if (uOf(f, na) === uOf(f, nb)) {
         es.push(na, nb, kind);
         continue;

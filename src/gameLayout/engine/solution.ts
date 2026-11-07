@@ -6,6 +6,7 @@ import { EDGE_CROSS, EDGE_HOP, EDGE_LCROSS, EDGE_STEP } from './router';
 import { spacingViolations, type SpacedRect } from './spacing';
 import { now } from './clock';
 import { aspectPenalty, hullStats, type HullStats } from './hull';
+import { lcrossMid, pieceOk, pieceTiles } from './intersection';
 
 /**
  * Tiles are packed into one number: (y + OFF) * KX + (x + OFF). The offset lets hand-edited
@@ -123,7 +124,7 @@ export class Solution {
         const e = this.netEdges[ni];
         for (let i = 0; i < e.length; i += 3) {
           if (e[i + 2] !== EDGE_LCROSS) continue;
-          for (const c of fp(e[i] + (e[i + 1] - e[i]) / 2)) {
+          for (const c of fp(lcrossMid(e[i], e[i + 1], KX))) {
             cells.add(c);
             inc(this.occI, c);
           }
@@ -263,15 +264,31 @@ export class Solution {
       const x = this.occX.get(c) ?? 0;
       const i = this.occI.get(c) ?? 0;
       if (s > 2 || l > 2 || (s && l) || x > 1 || (x && s) || (x && l !== 1)) out.add(c);
-      if ((l === 2 && i !== 1) || i > 1) out.add(c);
+      if ((l === 2 && i < 1) || i > 2) out.add(c);
     }
     if (this.autoPieces) for (const c of this.badIntersections()) out.add(c);
     for (const [x, y] of this.passthroughBad) out.add(key(x, y));
     return [...out];
   }
 
-  /** Intersection tiles whose crossed pipe does not run straight across them. */
-  badIntersections(): number[] {
+  /** Large intersection pieces: anchor -> the large nets going through. */
+  private pieces(): Map<number, number[]> {
+    const out = new Map<number, number[]>();
+    this.netEdges.forEach((e, ni) => {
+      if (!this.problem.nets[ni].large) return;
+      for (let i = 0; i < e.length; i += 3) {
+        if (e[i + 2] !== EDGE_LCROSS) continue;
+        const f = lcrossMid(e[i], e[i + 1], KX);
+        let l = out.get(f);
+        if (!l) out.set(f, (l = []));
+        if (!l.includes(ni)) l.push(ni);
+      }
+    });
+    return out;
+  }
+
+  /** Large nets covering each tile. */
+  private largeOwners(): Map<number, number[]> {
     const owners = new Map<number, number[]>();
     this.cells.forEach((cs, ni) => {
       if (!this.problem.nets[ni].large) return;
@@ -281,54 +298,31 @@ export class Solution {
         else owners.set(c, [ni]);
       }
     });
-    const has = (t: number, ni: number) => owners.get(t)?.includes(ni) ?? false;
+    return owners;
+  }
+
+  /**
+   * Tiles of intersection pieces whose pipes do not each keep to their own sides of the piece
+   * (or that more than two pipes use).
+   */
+  badIntersections(): number[] {
+    const owners = this.largeOwners();
     const out: number[] = [];
-    this.netEdges.forEach((e, ni) => {
-      if (!this.problem.nets[ni].large) return;
-      for (let i = 0; i < e.length; i += 3) {
-        if (e[i + 2] !== EDGE_LCROSS) continue;
-        const mid = e[i] + (e[i + 1] - e[i]) / 2;
-        const vertical = Math.abs(e[i + 1] - e[i]) >= KX;
-        const mx = kx(mid);
-        const my = ky(mid);
-        const fp = [mid, mid + 1, mid + KX, mid + KX + 1];
-        const others = (owners.get(mid) ?? []).filter((o) => o !== ni);
-        let ok = others.length === 1;
-        if (ok) {
-          const o = others[0];
-          const present = vertical
-            ? [key(mx - 1, my), key(mx - 1, my + 1), key(mx + 2, my), key(mx + 2, my + 1)]
-            : [key(mx, my - 1), key(mx + 1, my - 1), key(mx, my + 2), key(mx + 1, my + 2)];
-          const absent = vertical
-            ? [key(mx, my - 1), key(mx + 1, my - 1), key(mx, my + 2), key(mx + 1, my + 2)]
-            : [key(mx - 1, my), key(mx - 1, my + 1), key(mx + 2, my), key(mx + 2, my + 1)];
-          ok =
-            fp.every((t) => has(t, o) && (owners.get(t)?.length ?? 0) === 2) &&
-            present.every((t) => has(t, o)) &&
-            absent.every((t) => !has(t, o));
-        }
-        if (!ok) out.push(...fp);
-      }
-    });
+    for (const f of this.pieces().keys()) {
+      if (!pieceOk(f, KX, (t) => owners.get(t) ?? [])) out.push(...pieceTiles(f, KX));
+    }
     return out;
   }
 
-  /** Large intersections: [x, y] of the 2x2 piece, and the two nets. */
-  intersections(): { x: number; y: number; nets: [number, number] }[] {
-    const out: { x: number; y: number; nets: [number, number] }[] = [];
-    this.netEdges.forEach((e, ni) => {
-      if (!this.problem.nets[ni].large) return;
-      for (let i = 0; i < e.length; i += 3) {
-        if (e[i + 2] !== EDGE_LCROSS) continue;
-        const mid = e[i] + (e[i + 1] - e[i]) / 2;
-        const other = this.largeOwner.get(mid);
-        out.push({
-          x: kx(mid),
-          y: ky(mid),
-          nets: [ni, other !== undefined && other >= 0 ? other : -1],
-        });
-      }
-    });
+  /** Large intersections: [x, y] of the 2x2 piece, and the large nets using it. */
+  intersections(): { x: number; y: number; nets: number[] }[] {
+    const owners = this.largeOwners();
+    const out: { x: number; y: number; nets: number[] }[] = [];
+    for (const f of this.pieces().keys()) {
+      const nets = new Set<number>();
+      for (const t of pieceTiles(f, KX)) for (const n of owners.get(t) ?? []) nets.add(n);
+      out.push({ x: kx(f), y: ky(f), nets: [...nets] });
+    }
     return out;
   }
 
@@ -387,29 +381,30 @@ export class Solution {
         const bx = kx(b);
         const by = ky(b);
         const dist = Math.abs(ax - bx) + Math.abs(ay - by);
-        const straight = ax === bx || ay === by;
+        const straight = ax === bx || ay === by || kind === EDGE_LCROSS;
         let bad = !straight || dist < 1;
         if (!bad && kind === EDGE_STEP) bad = dist !== 1;
         if (!bad && kind === EDGE_HOP) bad = net.large || dist < 2 || dist > Math.max(1, this.jump);
         if (!bad && kind === EDGE_CROSS) bad = net.large || dist !== 3;
-        if (!bad && kind === EDGE_LCROSS) bad = !net.large || dist !== 4;
-        if (!bad && dist > 1) {
+        if (!bad && kind === EDGE_LCROSS) {
+          // straight across the piece, or around one of its corners
+          const corner = Math.abs(ax - bx) === 2 && Math.abs(ay - by) === 2;
+          bad = !net.large || !(((ax === bx || ay === by) && dist === 4) || corner);
+        }
+        if (!bad && kind === EDGE_LCROSS) {
+          // the 2x2 intersection piece the pipe goes through
+          for (const q of pieceTiles(lcrossMid(a, b, KX), KX)) {
+            if (!this.occL.get(q) || this.blocked.has(q)) bad = true;
+          }
+        } else if (!bad && dist > 1) {
           const sx = Math.sign(bx - ax);
           const sy = Math.sign(by - ay);
           for (let s = 1; s < dist; s++) {
             const q = key(ax + sx * s, ay + sy * s);
             if (this.blocked.has(q)) bad = true;
             const l = this.occL.get(q) ?? 0;
-            if (kind === EDGE_LCROSS) continue;
             if (kind === EDGE_HOP && l) bad = true;
             if (kind === EDGE_CROSS && !l) bad = true;
-          }
-          if (kind === EDGE_LCROSS) {
-            // the 2x2 intersection is centred between the two anchors
-            const mid = key((ax + bx) / 2, (ay + by) / 2);
-            for (const q of [mid, mid + 1, mid + KX, mid + KX + 1]) {
-              if ((this.occL.get(q) ?? 0) !== 2 || this.blocked.has(q)) bad = true;
-            }
           }
         }
         if (bad) errs.push(`${net.label}: broken pipe segment`);

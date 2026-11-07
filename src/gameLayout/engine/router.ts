@@ -5,7 +5,8 @@
  *  - pipes never pass through machines
  *  - a tile holds at most 2 normal pipes (crossing via an intersection or side by side);
  *    items and fluids may share
- *  - large fluid pipes are 2x2; two large pipes may cross (large intersection), they never
+ *  - large fluid pipes are 2x2; two large pipes may share a 2x2 large intersection piece, each
+ *    through its own sides (straight across or turning a corner); they never
  *    share a tile with a normal pipe
  *  - a normal pipe crosses a large pipe only through a "large fluid pipe passthrough": a 4x2
  *    piece laid in line with a straight run of the large pipe with two crossing slots in its
@@ -17,11 +18,15 @@
  */
 import type { PortKind } from './geometry';
 import { assignPassthroughs, type Crossing, type Passthrough } from './passthrough';
+import { lcrossEdge, lcrossMid, pieceOk, pieceTiles, sideAnchor, sideOwners } from './intersection';
 
 export const EDGE_STEP = 0;
 export const EDGE_HOP = 1;
 export const EDGE_CROSS = 2;
-/** Large pipe over another large pipe through a 2x2 large intersection (4 anchors apart). */
+/**
+ * Large pipe through a 2x2 large intersection piece: between the anchors right outside two of
+ * its sides (straight: 4 apart; around a corner: 2 apart in x and in y, see lcrossMid).
+ */
 export const EDGE_LCROSS = 3;
 
 export interface RouterNet {
@@ -172,6 +177,8 @@ export class Router {
   private came: Int32Array;
   private kindArr: Int8Array;
   private dirArr: Int8Array;
+  /** Intersection anchor of the crossing edge into each cell (large pipes). */
+  midArr: Int32Array;
   private gen = 0;
   private heap = new Heap();
   private popped = new Float64Array(2);
@@ -234,6 +241,7 @@ export class Router {
     this.came = new Int32Array(this.N);
     this.kindArr = new Int8Array(this.N);
     this.dirArr = new Int8Array(this.N);
+    this.midArr = new Int32Array(this.N);
   }
 
   // ------------------------------------------------------------------ occupancy
@@ -246,9 +254,9 @@ export class Router {
     return (
       Math.max(0, s - 2) +
       Math.max(0, l - 2) +
-      // two large pipes only meet at an intersection laid by one of them
-      (l === 2 && i !== 1 ? 1 : 0) +
-      Math.max(0, i - 1) +
+      // two large pipes only meet on an intersection piece (laid by one or both of them)
+      (l === 2 && i < 1 ? 1 : 0) +
+      Math.max(0, i - 2) +
       (this.interBad.has(c) ? 1 : 0) +
       (s && l ? Math.min(s, l) : 0) +
       Math.max(0, x - 1) +
@@ -289,7 +297,7 @@ export class Router {
       for (const a of tree) for (const c of this.footprint(a)) cells.add(c);
       for (let i = 0; i < edges.length; i += 3) {
         if (edges[i + 2] !== EDGE_LCROSS) continue;
-        const mid = edges[i] + (edges[i + 1] - edges[i]) / 2;
+        const mid = lcrossMid(edges[i], edges[i + 1], this.gw);
         for (const c of this.footprint(mid)) {
           cells.add(c);
           inter.add(c);
@@ -375,45 +383,59 @@ export class Router {
   }
 
   /**
-   * A large pipe at anchor c moving in direction d can cross another large pipe that runs
-   * straight across its path two tiles ahead: anchor c + 2d is fully covered by that one pipe,
-   * which continues on both sides, and the anchors c + d / c + 3d only touch it inside the
-   * intersection.
+   * A large pipe at anchor c moving in direction d can go through an intersection piece on the
+   * 2x2 two tiles ahead (f = c + 2d) when exactly one other large pipe covers it and uses two of
+   * its sides; it enters through the side facing c and leaves through the other free side,
+   * straight across or around the corner. Returns the anchor it leaves to (-1: no fit) and sets
+   * `fitExit` to the direction it leaves in.
    */
-  private intersectionFits(c: number, d: number, ownGen: number): boolean {
+  private intersectionFits(c: number, d: number, ownGen: number): number {
     const gw = this.gw;
     const DX = [1, -1, 0, 0];
     const DY = [0, 0, 1, -1];
     const mx = (c % gw) + 2 * DX[d];
     const my = Math.floor(c / gw) + 2 * DY[d];
-    if (mx < 1 || my < 1 || mx + 2 >= gw || my + 2 >= this.gh) return false;
-    const at = (x: number, y: number) => y * gw + x;
+    if (mx < 2 || my < 2 || mx + 3 >= gw || my + 3 >= this.gh) return -1;
+    const f = my * gw + mx;
     let owner = -1;
-    for (const [x, y] of [
-      [mx, my],
-      [mx + 1, my],
-      [mx, my + 1],
-      [mx + 1, my + 1],
-    ]) {
-      const t = at(x, y);
-      if (this.own[t] === ownGen) return false;
-      if (this.occL[t] !== 1 || this.occS[t] || this.occX[t] || this.occI[t]) return false;
+    for (const t of pieceTiles(f, gw)) {
+      if (this.own[t] === ownGen) return -1;
+      if (this.occL[t] !== 1 || this.occS[t] || this.occX[t] || this.occI[t] > 1) return -1;
       const o = this.ownerOf(t);
-      if (o < 0 || (owner >= 0 && o !== owner)) return false;
+      if (o < 0 || (owner >= 0 && o !== owner)) return -1;
       owner = o;
     }
-    // the crossed pipe runs straight across our path: present on both sides of the
-    // intersection, absent right before / after it along our direction
-    const vertical = DY[d] !== 0;
-    const present = vertical
-      ? [at(mx - 1, my), at(mx - 1, my + 1), at(mx + 2, my), at(mx + 2, my + 1)]
-      : [at(mx, my - 1), at(mx + 1, my - 1), at(mx, my + 2), at(mx + 1, my + 2)];
-    const absent = vertical
-      ? [at(mx, my - 1), at(mx + 1, my - 1), at(mx, my + 2), at(mx + 1, my + 2)]
-      : [at(mx - 1, my), at(mx - 1, my + 1), at(mx + 2, my), at(mx + 2, my + 1)];
-    for (const t of present) if (this.ownerOf(t) !== owner) return false;
-    for (const t of absent) if (this.occL[t] && this.ownerOf(t) === owner) return false;
-    return true;
+    const sides = sideOwners(f, gw, (t) => this.ownerOf(t));
+    let used = 0;
+    for (const o of sides) {
+      if (o === owner) used++;
+      else if (o === -2) return -1;
+    }
+    const entry = d ^ 1;
+    if (used !== 2 || sides[entry] === owner) return -1;
+    for (let k = 0; k < 4; k++) {
+      if (k === entry || sides[k] === owner) continue;
+      this.fitExit = k;
+      return sideAnchor(f, k, gw);
+    }
+    return -1;
+  }
+
+  private fitExit = 0;
+
+  /** Pieces whose pipes do not each keep to their own sides (or that three pipes use). */
+  private badPiece(f: number): boolean {
+    return !pieceOk(f, this.gw, (t) => this.ownersOf(t));
+  }
+
+  /** All large nets covering tile t (committed cells). */
+  private ownersOf(t: number): number[] {
+    if (t < 0 || t >= this.N || !this.occL[t]) return [];
+    const out: number[] = [];
+    this.nets.forEach((net, ni) => {
+      if (net.large && this.cells[ni].has(t)) out.push(ni);
+    });
+    return out;
   }
 
   /** Large net covering a tile (-1 none, -2 several). Uses the committed cells. */
@@ -477,6 +499,7 @@ export class Router {
     const came = this.came;
     const kindA = this.kindArr;
     const dirA = this.dirArr;
+    const midA = this.midArr;
     const own = this.own;
     const heap = this.heap;
     heap.clear();
@@ -548,16 +571,21 @@ export class Router {
           relax(n, nx, ny, gc + step + turn, c, d, EDGE_STEP);
         }
         if (large) {
-          if (!isOwn && this.intersectionFits(c, d, ownGen)) {
-            const m = c + 4 * OFF[d];
-            const mx = cx + 4 * DX[d];
-            const my = cy + 4 * DY[d];
+          const m = isOwn ? -1 : this.intersectionFits(c, d, ownGen);
+          if (m >= 0) {
+            const mx = m % gw;
+            const my = (m - mx) / gw;
+            const ex = this.fitExit;
             if (mx >= x0 && mx <= x1 && my >= y0 && my <= y1 && !blocked[m]) {
               const mid = c + 2 * OFF[d];
               let pen = 0;
               for (const q of this.footprint(mid)) pen += this.histL[q] + this.pres * this.occI[q];
               const sm = own[m] === ownGen ? 0 : this.largeCost(m, ownGen);
-              relax(m, mx, my, gc + 3 + xcost * (1 + pen) + sm + turn, c, d, EDGE_LCROSS);
+              // turning inside the piece costs a bend
+              const bendIn = ex !== d ? bend : 0;
+              const ng = gc + 3 + xcost * (1 + pen) + sm + turn + bendIn;
+              if (st[m] !== gen || ng < G[m]) midA[m] = mid;
+              relax(m, mx, my, ng, c, ex, EDGE_LCROSS);
             }
           }
           continue;
@@ -729,7 +757,13 @@ export class Router {
         const c = path[i];
         tree.add(c);
         mark(c);
-        if (i + 2 < path.length) edges.push(path[i + 2], c, path[i + 1]);
+        if (i + 2 >= path.length) continue;
+        if (path[i + 1] === EDGE_LCROSS) {
+          const [a, b] = lcrossEdge(path[i + 2], c, this.midArr[c], gw);
+          edges.push(a, b, EDGE_LCROSS);
+        } else {
+          edges.push(path[i + 2], c, path[i + 1]);
+        }
       }
       base = tree;
     }
@@ -934,6 +968,7 @@ export class Router {
       this.restore(b.snap);
       ok = b.score === 0;
     }
+    this.dropLonePieces();
     this.overusedCells();
     return ok;
   }
@@ -963,6 +998,7 @@ export class Router {
     this.largeFrozen = true;
     if (small.length) ok = this.negotiate(small, 40, deadline, clock, undefined, 'normal') && ok;
     this.largeFrozen = false;
+    this.dropLonePieces();
     const over = new Set(this.overusedCells());
     return (
       ok &&
@@ -1045,45 +1081,55 @@ export class Router {
     return out;
   }
 
-  /** Intersections whose crossed pipe no longer runs straight across them. */
+  /**
+   * Pieces only one large pipe goes through (the pipe it crossed moved away): the pipe runs
+   * over the same tiles as an ordinary large pipe instead, so no piece is needed there.
+   */
+  dropLonePieces(): number {
+    const gw = this.gw;
+    let dropped = 0;
+    this.nets.forEach((net, ni) => {
+      if (!net.large || net.fixed) return;
+      const e = this.edges[ni];
+      let changed = false;
+      const out: number[] = [];
+      const tree = new Set(this.tree[ni]);
+      for (let i = 0; i < e.length; i += 3) {
+        const [a, b, kind] = [e[i], e[i + 1], e[i + 2]];
+        const f = kind === EDGE_LCROSS ? lcrossMid(a, b, gw) : -1;
+        if (f < 0 || pieceTiles(f, gw).some((t) => this.occL[t] !== 1 || this.occI[t] !== 1)) {
+          out.push(a, b, kind);
+          continue;
+        }
+        const dIn = (f - a) / 2;
+        const dOut = (b - f) / 2;
+        const chain = [a, a + dIn, f, f + dOut, b];
+        for (let j = 0; j + 1 < chain.length; j++) out.push(chain[j], chain[j + 1], EDGE_STEP);
+        for (const c of chain) tree.add(c);
+        changed = true;
+        dropped++;
+      }
+      if (!changed) return;
+      this.ripup(ni);
+      this.commit(ni, tree, out);
+    });
+    return dropped;
+  }
+
+  /** Tiles of intersection pieces whose pipes do not each keep to their own sides. */
   checkIntersections(): Set<number> {
     const gw = this.gw;
-    const owners = new Map<number, number[]>();
-    this.nets.forEach((net, ni) => {
-      if (!net.large) return;
-      for (const c of this.cells[ni]) {
-        const l = owners.get(c);
-        if (l) l.push(ni);
-        else owners.set(c, [ni]);
-      }
-    });
-    const has = (t: number, ni: number) => owners.get(t)?.includes(ni) ?? false;
     const bad = new Set<number>();
+    const seen = new Set<number>();
     this.nets.forEach((net, ni) => {
       if (!net.large) return;
       const e = this.edges[ni];
       for (let i = 0; i < e.length; i += 3) {
         if (e[i + 2] !== EDGE_LCROSS) continue;
-        const mid = e[i] + (e[i + 1] - e[i]) / 2;
-        const vertical = Math.abs(e[i + 1] - e[i]) >= gw;
-        const mx = mid % gw;
-        const my = (mid - mx) / gw;
-        const at = (x: number, y: number) => y * gw + x;
-        const fp = this.footprint(mid);
-        const others = (owners.get(fp[0]) ?? []).filter((o) => o !== ni);
-        let ok = others.length === 1;
-        if (ok) {
-          const o = others[0];
-          ok = fp.every((t) => has(t, o) && (owners.get(t)?.length ?? 0) === 2);
-          const present = vertical
-            ? [at(mx - 1, my), at(mx - 1, my + 1), at(mx + 2, my), at(mx + 2, my + 1)]
-            : [at(mx, my - 1), at(mx + 1, my - 1), at(mx, my + 2), at(mx + 1, my + 2)];
-          const absent = vertical
-            ? [at(mx, my - 1), at(mx + 1, my - 1), at(mx, my + 2), at(mx + 1, my + 2)]
-            : [at(mx - 1, my), at(mx - 1, my + 1), at(mx + 2, my), at(mx + 2, my + 1)];
-          if (ok) ok = present.every((t) => has(t, o)) && absent.every((t) => !has(t, o));
-        }
-        if (!ok) for (const t of fp) bad.add(t);
+        const f = lcrossMid(e[i], e[i + 1], gw);
+        if (seen.has(f)) continue;
+        seen.add(f);
+        if (this.badPiece(f)) for (const t of this.footprint(f)) bad.add(t);
       }
     });
     return bad;

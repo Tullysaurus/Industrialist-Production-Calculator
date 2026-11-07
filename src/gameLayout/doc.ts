@@ -381,7 +381,10 @@ export function evaluateDoc(
       const kind = e[i + 2];
       const d = Math.abs(kx(a) - kx(b)) + Math.abs(ky(a) - ky(b));
       const straight = kx(a) === kx(b) || ky(a) === ky(b);
-      let ok = straight;
+      // through an intersection piece a large pipe may also turn (2 apart in x and in y)
+      const corner =
+        kind === EDGE_LCROSS && Math.abs(kx(a) - kx(b)) === 2 && Math.abs(ky(a) - ky(b)) === 2;
+      let ok = straight || corner;
       if (kind === 0) ok &&= d === 1;
       else if (kind === 1) ok &&= !net.large && d >= 2 && d <= Math.max(1, sol.jump);
       else if (kind === EDGE_CROSS) ok &&= !net.large && d === 3;
@@ -492,7 +495,7 @@ export function evaluateDoc(
       problems.push({
         severity: 'error',
         code: 'no-intersection',
-        message: `${P.nets[it.nets[0]].label} crosses a large pipe without an intersection piece`,
+        message: `${P.nets[it.nets[0]].label} goes through a large pipe intersection that has no piece`,
         tiles: [[it.x, it.y]],
         netKey: P.nets[it.nets[0]].key,
       });
@@ -505,7 +508,7 @@ export function evaluateDoc(
       problems.push({
         severity: 'warning',
         code: 'bad-intersection',
-        message: 'Intersection piece without two large pipes crossing through it',
+        message: 'Intersection piece without a large pipe going through it',
         tiles: [[it.x, it.y]],
         pieceId: it.id,
       });
@@ -513,7 +516,8 @@ export function evaluateDoc(
       problems.push({
         severity: 'error',
         code: 'bad-intersection',
-        message: 'The crossed large pipe does not run straight through the intersection',
+        message:
+          'Pipes on an intersection must each enter and leave through their own sides (at most two pipes)',
         tiles: [[it.x, it.y]],
         pieceId: it.id,
       });
@@ -642,7 +646,6 @@ export function passthroughProblem(sol: Solution, pt: DocPassthrough): string | 
       : [key(pt.x, pt.y + i), key(pt.x + 1, pt.y + i)];
     if (cells.some((t) => sol.occX.get(t))) return 'crossings must use the two middle tiles';
   }
-  void EDGE_LCROSS;
   return null;
 }
 
