@@ -70,7 +70,8 @@ the flowchart changes (new machines appear as unplaced, removed ones are flagged
   whichever axis fits better), with a tidy-vs-compact slider for how much space they may cost.
 - **Power**: the generator places HV poles (12x12, 8 nodes of 120 MMF/s, reach 70 tiles),
   MV poles (2x1, 4 nodes of 1.5 MMF/s, reach 22 tiles), HV transformers (8x8, 15 % loss
-  without coolant) and one external HV grid connection on the edge of the layout, so every
+  without coolant, at most 240 MMF/s on each side; machines can connect straight to either side
+  within that voltage's reach) and one external HV grid connection on the edge of the layout, so every
   machine with a power connection is on a pole of its voltage with enough capacity on the way.
   Node positions on the poles are not in the game data, so every connection keeps a margin
   (12 tiles on HV, 4 on MV). A node feeds any number of cables up to its rating, and a machine

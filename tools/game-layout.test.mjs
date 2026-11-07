@@ -413,7 +413,7 @@ test('power: reach, capacity and the grid are checked', async () => {
   assert.equal(r.problems[0].code, 'unpowered');
   // an MV pole has 4 nodes of 1.5 MMF/s: five 1.4 MMF/s machines do not fit
   r = PW.solvePower(
-    [0, 1, 2, 3, 4].map((i) => consumer(`${i}|0`, [55, 0.5], 'MV', 1.4e6)),
+    [0, 1, 2, 3, 4].map((i) => consumer(`${i}|0`, [66, 0.5], 'MV', 1.4e6)),
     pieces,
   );
   assert.ok(r.problems.some((p) => p.code === 'power-overload'));
@@ -424,6 +424,17 @@ test('power: reach, capacity and the grid are checked', async () => {
     r.nodeUse[pieces.indexOf(mv)].filter((u) => u > 0),
     [1.5e6, 1.5e6],
   );
+  // transformers power machines directly: MV side (MV reach), HV side (HV reach, no loss)
+  r = PW.solvePower(
+    [consumer('0|0', [43.5, 15], 'MV', 2e6), consumer('1|0', [43.5, 60], 'HV', 10e6)],
+    [grid, hv, tr],
+  );
+  assert.deepEqual(r.problems, []);
+  assert.deepEqual(r.feed, [2, 2], 'both on the transformer');
+  assert.ok(Math.abs(r.load[1] - (2e6 / 0.85 + 10e6)) < 1, 'HV pole feeds both');
+  // at most 240 MMF/s on each side
+  r = PW.solvePower([consumer('0|0', [43.5, 64], 'HV', 250e6)], [grid, hv, tr]); // HV pole out of reach
+  assert.ok(r.problems.some((p) => p.code === 'power-overload'));
   // no grid connection: nothing is powered
   r = PW.solvePower([consumer('0|0', [61, 0.5], 'MV', 1)], [hv, tr, mv]);
   assert.ok(r.problems.some((p) => p.code === 'no-grid'));

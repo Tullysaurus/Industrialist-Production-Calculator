@@ -201,7 +201,10 @@ export class Ledger {
   parent: number[];
   nodeUse: number[][];
   feedNode: number[];
+  /** Load handed out (transformers: on their MV side). */
   load: number[];
+  /** Transformers: HV machines connected straight to their HV side. */
+  hvDirect: number[];
 
   constructor(pieces: PowerPiece[], parent: number[]) {
     this.pieces = pieces;
@@ -209,6 +212,7 @@ export class Ledger {
     this.nodeUse = [];
     this.feedNode = [];
     this.load = [];
+    this.hvDirect = [];
     for (let i = 0; i < pieces.length; i++) this.grow(i);
   }
 
@@ -219,6 +223,7 @@ export class Ledger {
       this.nodeUse.push(sp ? new Array<number>(sp.nodes).fill(0) : []);
       this.feedNode.push(-1);
       this.load.push(0);
+      this.hvDirect.push(0);
     }
     while (this.parent.length <= i) this.parent.push(-2);
   }
@@ -229,10 +234,19 @@ export class Ledger {
   }
 
   /** Can `amount` more be drawn through piece i? */
-  fits(i: number, amount: number): boolean {
+  /**
+   * Can `amount` more be drawn through piece i? `hv`: an HV machine on a transformer's HV side
+   * (no conversion, no loss).
+   */
+  fits(i: number, amount: number, hv = false): boolean {
     let cur = i;
     let nd = -1;
     let a = amount;
+    if (hv && this.pieces[i].kind === 'transformer') {
+      if (this.draw(i) + a > TRANSFORMER.maxInput + 1e-6) return false;
+      nd = this.feedNode[i];
+      cur = this.parent[i];
+    }
     while (cur >= 0) {
       const sp = this.spec(cur);
       if (sp) {
@@ -247,7 +261,11 @@ export class Ledger {
         }
       }
       if (this.pieces[cur].kind === 'transformer') {
-        if ((this.load[cur] + a) / (1 - TRANSFORMER.loss) > TRANSFORMER.maxInput) return false;
+        // both sides carry at most 240 MMF/s: what it hands out on MV, what it takes on HV
+        if (this.load[cur] + a > TRANSFORMER.maxInput + 1e-6) return false;
+        if (this.draw(cur) + a / (1 - TRANSFORMER.loss) > TRANSFORMER.maxInput + 1e-6) {
+          return false;
+        }
         a /= 1 - TRANSFORMER.loss;
       }
       nd = this.feedNode[cur];
@@ -257,11 +275,17 @@ export class Ledger {
   }
 
   /** Draws `amount` through piece i (forced: also when it does not fit). */
-  commit(i: number, amount: number): void {
+  commit(i: number, amount: number, hv = false): void {
     let cur = i;
     let nd = -1;
     let a = amount;
     let child = -1;
+    if (hv && this.pieces[i].kind === 'transformer') {
+      this.hvDirect[i] += a;
+      child = i;
+      nd = this.feedNode[i];
+      cur = this.parent[i];
+    }
     while (cur >= 0) {
       const sp = this.spec(cur);
       this.load[cur] += a;
@@ -301,7 +325,7 @@ export class Ledger {
   /** What piece j takes from its parent. */
   draw(j: number): number {
     return this.pieces[j].kind === 'transformer'
-      ? this.load[j] / (1 - TRANSFORMER.loss)
+      ? this.load[j] / (1 - TRANSFORMER.loss) + this.hvDirect[j]
       : this.load[j];
   }
 }
@@ -391,8 +415,10 @@ export function solvePower(
   // nearest pole in reach with room all the way up to the grid
   const ledger = new Ledger(pieces, parent);
   const { nodeUse, load } = ledger;
-  const fits = (i: number, a: number) => ledger.fits(i, a);
-  const commit = (i: number, a: number) => ledger.commit(i, a);
+  const fits = (i: number, a: number, hv = false) => ledger.fits(i, a, hv);
+  const commit = (i: number, a: number, hv = false) => ledger.commit(i, a, hv);
+  /** Where a machine of voltage v connects on piece i (a transformer's matching side). */
+  const connectAt = (i: number, v: Voltage) => (v === 'HV' ? hvAt(i) : mvAt(i));
   const feed = new Array<number>(consumers.length).fill(-1);
   const overloaded = new Set<number>();
   const forced: number[] = [];
@@ -400,8 +426,10 @@ export function solvePower(
     const cands: [number, number][] = [];
     pieces.forEach((p, i) => {
       if (parent[i] === -2) return;
-      if (!(p.kind === 'hv' && c.type === 'HV') && !(p.kind === 'mv' && c.type === 'MV')) return;
-      const d = dist(c.at, centre[i]);
+      // poles of the machine's voltage, or a transformer (MV side / HV side)
+      const pole = (p.kind === 'hv' && c.type === 'HV') || (p.kind === 'mv' && c.type === 'MV');
+      if (!pole && p.kind !== 'transformer') return;
+      const d = dist(c.at, connectAt(i, c.type));
       if (d <= reach(c.type)) cands.push([d, i]);
     });
     return cands.sort((p, q) => p[0] - q[0]);
@@ -415,9 +443,10 @@ export function solvePower(
       const ci = byKey.get(ck);
       const i = byId.get(pid);
       if (ci === undefined || i === undefined) continue;
-      if (!candsOf[ci].some(([, j]) => j === i) || !fits(i, consumers[ci].load)) continue;
+      const hv = consumers[ci].type === 'HV';
+      if (!candsOf[ci].some(([, j]) => j === i) || !fits(i, consumers[ci].load, hv)) continue;
       feed[ci] = i;
-      commit(i, consumers[ci].load);
+      commit(i, consumers[ci].load, hv);
       done.add(ci);
       committed.push(ci);
     }
@@ -430,23 +459,26 @@ export function solvePower(
     const c = consumers[ci];
     const cands = candsOf[ci];
     if (!cands.length) continue;
-    const ok = cands.find(([, i]) => fits(i, c.load));
+    const hv = c.type === 'HV';
+    const ok = cands.find(([, i]) => fits(i, c.load, hv));
     const i = ok ? ok[1] : cands[0][1];
     if (!ok) {
       overloaded.add(i);
       forced.push(ci);
     }
     feed[ci] = i;
-    commit(i, c.load);
+    commit(i, c.load, hv);
     committed.push(ci);
   }
   const draw = (j: number) => ledger.draw(j);
   for (const i of overloaded) {
     const p = pieces[i];
-    const sp = ledger.spec(i)!;
+    const sp = ledger.spec(i);
     problems.push({
       code: 'power-overload',
-      message: `${pieceName(p.kind)} (or a pole / transformer feeding it) cannot carry its machines: ${fmt(load[i])} over ${sp.nodes} nodes of ${fmt(sp.rating)}`,
+      message: sp
+        ? `${pieceName(p.kind)} (or a pole / transformer feeding it) cannot carry its machines: ${fmt(load[i])} over ${sp.nodes} nodes of ${fmt(sp.rating)}`
+        : `HV transformer (or the pole feeding it) cannot carry its machines: ${fmt(load[i])} out on MV, ${fmt(ledger.draw(i))} in on HV, at most ${fmt(TRANSFORMER.maxInput)} each`,
       tiles: [tileOf(p)],
       pieceId: p.id,
     });
@@ -479,7 +511,14 @@ export function solvePower(
   consumers.forEach((c, ci) => {
     const i = feed[ci];
     if (i < 0) return;
-    links.push({ from: i, to: -1, a: centre[i], b: c.at, type: c.type, power: c.load });
+    links.push({
+      from: i,
+      to: -1,
+      a: connectAt(i, c.type),
+      b: c.at,
+      type: c.type,
+      power: c.load,
+    });
   });
   const assign = new Map<string, string>();
   for (const ci of committed) assign.set(consumers[ci].key, pieces[feed[ci]].id);
@@ -766,16 +805,19 @@ export function planPower(problem: Problem, sol: Solution, keep: PowerPiece[] = 
       for (let tries = 0; tries < 12; tries++) {
         let best = -1;
         let bd = Infinity;
+        const hv = c.type === 'HV';
         pieces.forEach((p, i) => {
-          if (p.kind !== kinds) return;
-          const d = dist(c.at, pieceCentre(p));
-          if (d <= R && d < bd && canAdd(i, c.load)) {
+          // a pole of the machine's voltage, or a transformer's matching side
+          if (p.kind !== kinds && p.kind !== 'transformer') return;
+          const at = p.kind === 'transformer' ? (hv ? hvAt(i) : mvAt(i)) : pieceCentre(p);
+          const d = dist(c.at, at);
+          if (d <= R && d < bd && ledger.fits(i, c.load, hv)) {
             bd = d;
             best = i;
           }
         });
         if (best >= 0) {
-          ledger.commit(best, c.load);
+          ledger.commit(best, c.load, hv);
           assigned.set(c.key, pieces[best].id);
           break;
         }
