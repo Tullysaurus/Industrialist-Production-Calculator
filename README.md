@@ -64,6 +64,11 @@ the flowchart changes (new machines appear as unplaced, removed ones are flagged
   so an L- or T-shaped layout is only lightly penalised for its notches (long tails and very
   elongated layouts cost a little extra, which keeps the shape compact). Pinned machines and pipes form a fixed block the rest is laid out around. It
   runs in a Web Worker, shows its best layout while it works and can be stopped at any time.
+- **Pipe tidy**: after routing, after compaction and on the finished layout, every pipe is laid
+  again with the rest fixed, hugging machines and other pipes with fewer bends; a new route is
+  kept when it is better and adds no conflict, and a tidy is kept unless it widens the outline.
+  Valves on pipes that move are laid again, and space the tidy frees is used for power when
+  machines are still unpowered. In the editor: Tidy pipes (all) and Tidy (selection).
 - **Tidiness options** (generator panel): same machines in rows (one row, or a mirrored
   back-to-back pair sharing a corridor), ports facing the shared corridors (inputs on one side,
   outputs on the other) and production in flow order (raw materials to products, along
