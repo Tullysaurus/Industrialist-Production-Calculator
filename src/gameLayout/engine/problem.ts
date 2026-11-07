@@ -718,6 +718,8 @@ export function buildProblem(input: LayoutInput, cfgOverrides?: Partial<LayoutCo
         }
       }
     }
+    // a connection needs machines on at least two of its slots (others may have none)
+    if (keep.filter((l) => l.length > 0).length < 2) continue;
     const minCount = Math.min(...keep.map((l) => l.length).filter((n) => n > 0));
     // most separate pipes each group can take: one per machine, or one per port when a slot has
     // several ports (an exhaust stack with two exhaust inputs takes two pipes)
@@ -750,6 +752,8 @@ export function buildProblem(input: LayoutInput, cfgOverrides?: Partial<LayoutCo
       const parts: { wide: Terminal[]; small: Terminal[] } = { wide: [], small: [] };
       members.forEach((k, m) => {
         const L = keep[m];
+        // no machines left on this side (count 0, or all surplus): nothing to connect
+        if (!L.length) return;
         const side = parts[isWide[m] ? 'wide' : 'small'];
         if (L.length >= kSplit || ss[m].requireAll) {
           const ids: number[] = [];
