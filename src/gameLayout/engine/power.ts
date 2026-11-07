@@ -638,6 +638,9 @@ export interface PowerPlan {
   result: PowerResult;
 }
 
+/** Time the planner may spend taking out pieces that are not needed. */
+const PRUNE_MS = 400;
+
 /** Room around the layout where poles may stand. */
 const RING = 14;
 
@@ -1006,7 +1009,16 @@ export function planPower(problem: Problem, sol: Solution, keep: PowerPiece[] = 
           // other uncovered MV machines this pole would reach
           let cover = 0;
           for (const o of mvCons) if (dist(o.at, cc) <= R_MV) cover++;
-          const s = -cover * 4 + dist(cc, mvAt(feeder)) * 0.05;
+          // tidy: in line with poles already placed nearby (same row or column)
+          let align = 0;
+          for (const q of pieces) {
+            if (q.kind !== 'mv') continue;
+            if ((q.y === y || q.x === x) && Math.abs(q.x - x) + Math.abs(q.y - y) <= 3 * R_MV) {
+              align = 1;
+              break;
+            }
+          }
+          const s = -cover * 4 - align * 3 + dist(cc, mvAt(feeder)) * 0.05;
           if (!best || s < best.s) best = { x, y, r, feeder, s };
         }
       }
@@ -1034,9 +1046,28 @@ export function planPower(problem: Problem, sol: Solution, keep: PowerPiece[] = 
   );
   const keptIds = new Set(kept.map((p) => p.id));
   const keptAssign = new Map([...result0.assign].filter(([, id]) => keptIds.has(id)));
-  const result = solvePower(consumers, kept, keptAssign);
+  let result = solvePower(consumers, kept, keptAssign);
+  // fewer pieces: take out lightly loaded poles / transformers one by one while every machine
+  // keeps its power (their machines and the pieces they fed move to others in reach)
+  let final = kept;
+  const t0 = Date.now();
+  const order = final
+    .map((p, i) => ({ p, load: result.load[i] }))
+    .filter(({ p }) => p.kind !== 'grid' && !keep.some((k) => k.id === p.id))
+    .sort((a, b) => a.load - b.load)
+    .map(({ p }) => p.id);
+  for (const id of order) {
+    if (Date.now() - t0 > PRUNE_MS) break;
+    const trial = final.filter((p) => p.id !== id);
+    const ta = new Map([...result.assign].filter(([, pid]) => pid !== id));
+    const r = solvePower(consumers, trial, ta);
+    if (r.problems.length <= result.problems.length && r.unpowered.size <= result.unpowered.size) {
+      final = trial;
+      result = r;
+    }
+  }
   for (const i of result.unpowered) unpowered.add(i);
-  return { pieces: kept, unpowered, result, assign: result.assign };
+  return { pieces: final, unpowered, result, assign: result.assign };
 }
 
 /** Key of a tile, for callers that index power pieces by tile. */

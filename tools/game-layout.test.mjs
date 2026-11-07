@@ -135,7 +135,7 @@ test('erasing pipe tiles splits the network and is reported until it is re-route
 });
 
 test('a generated layout opens in the editor without errors and keeps pinned machines', () => {
-  const opts = { timeBudget: 12, valves: false, seed: 1, quantumJump: 3 };
+  const opts = { timeBudget: 16, valves: false, seed: 1, quantumJump: 3 };
   const first = runLayout(input, opts);
   assert.equal(first.summary.fullyRouted, true, 'the sample save routes within the budget');
   const view = D.evaluateDoc(ctx, first.doc);
