@@ -553,3 +553,43 @@ test('quantum piping: a generated layout uses other nodes and opens without erro
   }
   assert.ok(viaOther > 0, 'quantum piping feeds some machine through another node');
 });
+
+test('quantum piping: a normal pipe crosses into a large node through a passthrough flat against it', async () => {
+  const pctx = D.buildContext(buildProblem(await powerPlantInput()));
+  const P = pctx.problem;
+  const instOf = (re) => P.instances.findIndex(([ni, li]) => li === 0 && re.test(P.nodes[ni].name));
+  const cpp = instOf(/coal power/i);
+  const stack = instOf(/exhaust/i);
+  const drill = instOf(/drill/i);
+  // the exhaust pipe runs up the plant's left side, past its exhaust node; coal comes from
+  // the left, so it has to cross the exhaust pipe anyway
+  let doc = O.placeMachine(null, pctx, cpp, 40, 40, 0);
+  doc = O.placeMachine(doc, pctx, stack, 4, 4, 0);
+  doc = O.placeMachine(doc, pctx, drill, 20, 44, 0);
+  const has = (n, i) => n.terminals.some((t) => t.inst === i);
+  const exhaust = P.nets.find((n) => n.large && has(n, cpp) && has(n, stack));
+  const coal = P.nets.find((n) => !n.large && has(n, cpp) && has(n, drill));
+  doc = R.routeNetworks(D.evaluateDoc(pctx, doc, { analyse: false }), [exhaust.id], 5).doc;
+  const route = (quantum) =>
+    R.routeNetworks(D.evaluateDoc(pctx, doc, { analyse: false }), [coal.id], 5, quantum).doc;
+  const intoNode = (d) => {
+    const e = d.pipes.find((p) => p.net === coal.key).edges;
+    let n = 0;
+    for (let i = 0; i < e.length; i += 5) {
+      if (e[i + 4] === 2 && Math.abs(e[i] - e[i + 2]) + Math.abs(e[i + 1] - e[i + 3]) === 2) n++;
+    }
+    return n;
+  };
+  const plain = route(false);
+  assert.equal(intoNode(plain), 0, 'without quantum piping coal goes round to its own port');
+  const q = route(true);
+  assert.equal(intoNode(q), 1, 'with it, coal crosses straight into the exhaust node');
+  assert.ok(
+    q.pipes.find((p) => p.net === coal.key).edges.length <
+      plain.pipes.find((p) => p.net === coal.key).edges.length,
+    'and the pipe is shorter',
+  );
+  const view = D.evaluateDoc(pctx, q);
+  assert.equal(errorsOf(view).length, 0, JSON.stringify(errorsOf(view).slice(0, 3)));
+  assert.equal(q.passthroughs.length, 1);
+});

@@ -29,6 +29,33 @@ export const EDGE_CROSS = 2;
  */
 export const EDGE_LCROSS = 3;
 
+/**
+ * The two large-pipe tiles a passthrough crossing a -> b goes over (ascending), and its node
+ * end. A normal crossing is 3 long and ends beyond the large pipe. With quantum piping a
+ * crossing may also be 2 long and end on the large pipe right outside a machine node (a
+ * passthrough flat against the node): `end` is that tile (-1 for a normal crossing).
+ * `stride` is the grid width (router) or KX (tile keys); `machine(t)`: a machine is on tile t.
+ */
+export function crossSpan(
+  a: number,
+  b: number,
+  stride: number,
+  machine: (t: number) => boolean,
+): { tiles: [number, number]; end: number } {
+  const d = b - a;
+  const unit = Math.abs(d) >= stride ? Math.sign(d) * stride : Math.sign(d);
+  const len = Math.round(d / unit);
+  if (len !== 2) {
+    const t1 = a + unit;
+    const t2 = a + 2 * unit;
+    return { tiles: t1 < t2 ? [t1, t2] : [t2, t1], end: -1 };
+  }
+  // the end with the machine right behind it is on the pipe
+  const end = machine(b + unit) ? b : a;
+  const mid = a + unit;
+  return { tiles: end < mid ? [end, mid] : [mid, end], end };
+}
+
 export interface RouterNet {
   large: boolean;
   kind: PortKind;
@@ -314,15 +341,15 @@ export class Router {
       for (const c of inter) this.occI[c]++;
     } else {
       for (const c of tree) cells.add(c);
-      for (const c of cells) this.occS[c]++;
       for (let i = 0; i < edges.length; i += 3) {
         if (edges[i + 2] !== EDGE_CROSS) continue;
-        const a = edges[i];
-        const b = edges[i + 1];
-        const step = (b - a) / 3;
-        cross.add(a + step);
-        cross.add(a + 2 * step);
+        const { tiles, end } = crossSpan(edges[i], edges[i + 1], this.gw, (t) => this.isMachine(t));
+        cross.add(tiles[0]);
+        cross.add(tiles[1]);
+        // a crossing into a node ends on the large pipe: that tile is the slot, not a pipe tile
+        if (end >= 0) cells.delete(end);
       }
+      for (const c of cells) this.occS[c]++;
       const fluidX = this.nets[ni].kind === 'Fluid' ? 1 : 0;
       for (const c of cross) {
         this.occX[c]++;
@@ -334,6 +361,10 @@ export class Router {
     this.edges[ni] = edges;
     this.crossCells[ni] = cross;
     this.interCells[ni] = inter;
+  }
+
+  private isMachine(t: number): boolean {
+    return t >= 0 && t < this.N && this.blocked[t] === 1;
   }
 
   private smallCost(c: number): number {
@@ -605,11 +636,60 @@ export class Router {
           }
           continue;
         }
+        if (!large && own[c] === ownGen && occL[c] > 0 && occL[n] > 0) {
+          // quantum piping, out of a node: from the tile on the large pipe right outside the
+          // node, across the pipe through a passthrough flat against the node
+          const back = c - OFF[d];
+          const n2 = n + OFF[d];
+          const x2 = cx + 2 * DX[d];
+          const y2 = cy + 2 * DY[d];
+          if (
+            this.isMachine(back) &&
+            x2 >= x0 &&
+            x2 <= x1 &&
+            y2 >= y0 &&
+            y2 <= y1 &&
+            !blocked[n2] &&
+            occL[n2] === 0 &&
+            !occS[n] &&
+            this.passthroughFits(c, d, this.curFluid)
+          ) {
+            const pen =
+              (1 + this.hist[c] + this.hist[n]) * (1 + this.pres * (this.occX[c] + this.occX[n]));
+            const s2 = own[n2] === ownGen ? 0 : this.smallCost(n2);
+            relax(n2, x2, y2, gc + 1 + xcost * pen + s2 + turn, c, d, EDGE_CROSS);
+          }
+          continue;
+        }
         if (isOwn) continue;
         if (occL[n] > 0) {
           // passthrough: cross a 2-wide large pipe straight to the tile beyond it
           const n2 = n + OFF[d];
           const n3 = n2 + OFF[d];
+          if (
+            tg[n2] === gen &&
+            occL[n2] > 0 &&
+            !blocked[n2] &&
+            this.isMachine(n3) &&
+            !occS[n] &&
+            !occS[n2] &&
+            this.passthroughFits(n, d, this.curFluid)
+          ) {
+            // quantum piping, into a node: across the large pipe through a passthrough flat
+            // against the node, ending on the pipe right outside it
+            const pen =
+              (1 + this.hist[n] + this.hist[n2]) * (1 + this.pres * (this.occX[n] + this.occX[n2]));
+            relax(
+              n2,
+              cx + 2 * DX[d],
+              cy + 2 * DY[d],
+              gc + 1 + xcost * pen + turn,
+              c,
+              d,
+              EDGE_CROSS,
+            );
+            continue;
+          }
           const x3 = cx + 3 * DX[d];
           const y3 = cy + 3 * DY[d];
           if (x3 < x0 || x3 > x1 || y3 < y0 || y3 > y1) continue;
@@ -648,7 +728,8 @@ export class Router {
           const g = this.gw;
           if (occL[c] || occL[c + 1] || occL[c + g] || occL[c + g + 1]) conflict = true;
           if (occS[c] || occS[c + 1] || occS[c + g] || occS[c + g + 1]) conflict = true;
-        } else if (occL[c] || occS[c] >= 2) {
+        } else if ((occL[c] && kindA[c] !== EDGE_CROSS) || occS[c] >= 2) {
+          // (a crossing into a node ends on the large pipe: that is its slot)
           conflict = true;
         }
       }
@@ -801,12 +882,10 @@ export class Router {
       const e = this.edges[ni];
       for (let i = 0; i < e.length; i += 3) {
         if (e[i + 2] !== EDGE_CROSS) continue;
-        const a = Math.min(e[i], e[i + 1]);
-        const b = Math.max(e[i], e[i + 1]);
-        const step = (b - a) / 3;
-        const t1 = a + step;
+        const { tiles } = crossSpan(e[i], e[i + 1], gw, (t) => this.isMachine(t));
+        const t1 = tiles[0];
         const x = t1 % gw;
-        out.push({ net: ni, kind: net.kind, x, y: (t1 - x) / gw, vertical: step !== 1 });
+        out.push({ net: ni, kind: net.kind, x, y: (t1 - x) / gw, vertical: tiles[1] - t1 !== 1 });
       }
     });
     return out;

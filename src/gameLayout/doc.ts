@@ -8,8 +8,8 @@ import type { GameLayoutDoc, DocMachine, DocPipe, DocValve, DocPassthrough } fro
 import { Analysis, type Junction, type PlacedValve } from './engine/flows';
 import { accessCells, rot, valveShape, type Cell, type Shape } from './engine/geometry';
 import type { Problem } from './engine/problem';
-import { EDGE_CROSS, EDGE_LCROSS } from './engine/router';
-import { key, kx, ky, Solution, type SolMachine } from './engine/solution';
+import { crossSpan, EDGE_CROSS, EDGE_LCROSS } from './engine/router';
+import { key, KX, kx, ky, Solution, type SolMachine } from './engine/solution';
 import { spacingViolations, type SpacedRect } from './engine/spacing';
 
 export type ProblemSeverity = 'error' | 'warning';
@@ -391,8 +391,14 @@ export function evaluateDoc(
       let ok = straight || corner;
       if (kind === 0) ok &&= d === 1;
       else if (kind === 1) ok &&= !net.large && d >= 2 && d <= Math.max(1, sol.jump);
-      else if (kind === EDGE_CROSS) ok &&= !net.large && d === 3;
-      else ok &&= net.large && d === 4;
+      else if (kind === EDGE_CROSS) {
+        ok &&= !net.large && (d === 3 || d === 2);
+        // 2 long: into a machine node through a passthrough flat against it (quantum piping)
+        if (ok && d === 2) {
+          const { end } = crossSpan(a, b, KX, (t) => sol.blocked.has(t));
+          ok = end >= 0 && !!sol.occL.get(end);
+        }
+      } else ok &&= net.large && d === 4;
       if (ok && kind === 1) {
         const sx = Math.sign(kx(b) - kx(a));
         const sy = Math.sign(ky(b) - ky(a));

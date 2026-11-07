@@ -2,7 +2,7 @@
 import { accessCells, largeAnchor, occupied, type Shape } from './geometry';
 import { assignPassthroughs, type Crossing, type Passthrough } from './passthrough';
 import type { Problem } from './problem';
-import { EDGE_CROSS, EDGE_HOP, EDGE_LCROSS, EDGE_STEP } from './router';
+import { crossSpan, EDGE_CROSS, EDGE_HOP, EDGE_LCROSS, EDGE_STEP } from './router';
 import { spacingViolations, type SpacedRect } from './spacing';
 import { now } from './clock';
 import { aspectPenalty, hullStats, type HullStats } from './hull';
@@ -147,23 +147,24 @@ export class Solution {
           }
         }
       }
+      const cross = new Set<number>();
+      if (!large) {
+        const e = this.netEdges[ni];
+        for (let i = 0; i < e.length; i += 3) {
+          if (e[i + 2] !== EDGE_CROSS) continue;
+          const { tiles, end } = crossSpan(e[i], e[i + 1], KX, (t) => this.blocked.has(t));
+          cross.add(tiles[0]);
+          cross.add(tiles[1]);
+          // a crossing into a node (quantum piping) ends in the passthrough's slot
+          if (end >= 0) cells.delete(end);
+        }
+      }
       this.cells.push(cells);
       for (const c of cells) {
         inc(large ? this.occL : this.occS, c);
         if (large) this.largeOwner.set(c, this.largeOwner.has(c) ? -2 : ni);
       }
-      if (!large) {
-        const e = this.netEdges[ni];
-        const cross = new Set<number>();
-        for (let i = 0; i < e.length; i += 3) {
-          if (e[i + 2] !== EDGE_CROSS) continue;
-          const a = Math.min(e[i], e[i + 1]);
-          const step = (Math.max(e[i], e[i + 1]) - a) / 3;
-          cross.add(a + step);
-          cross.add(a + 2 * step);
-        }
-        for (const c of cross) inc(this.occX, c);
-      }
+      for (const c of cross) inc(this.occX, c);
     });
     if (this.autoPieces) {
       const res = assignPassthroughs(this.crossings(), {
@@ -238,10 +239,9 @@ export class Solution {
       if (net.large) return;
       for (let i = 0; i < e.length; i += 3) {
         if (e[i + 2] !== EDGE_CROSS) continue;
-        const a = Math.min(e[i], e[i + 1]);
-        const step = (Math.max(e[i], e[i + 1]) - a) / 3;
-        const t = a + step;
-        out.push({ net: ni, kind: net.kind, x: kx(t), y: ky(t), vertical: step !== 1 });
+        const { tiles } = crossSpan(e[i], e[i + 1], KX, (t) => this.blocked.has(t));
+        const t = tiles[0];
+        out.push({ net: ni, kind: net.kind, x: kx(t), y: ky(t), vertical: tiles[1] - t !== 1 });
       }
     });
     return out;
@@ -453,7 +453,14 @@ export class Solution {
         let bad = !straight || dist < 1;
         if (!bad && kind === EDGE_STEP) bad = dist !== 1;
         if (!bad && kind === EDGE_HOP) bad = net.large || dist < 2 || dist > Math.max(1, this.jump);
-        if (!bad && kind === EDGE_CROSS) bad = net.large || dist !== 3;
+        if (!bad && kind === EDGE_CROSS) {
+          bad = net.large || (dist !== 3 && dist !== 2);
+          if (!bad && dist === 2) {
+            // into a node: the end is on the large pipe, right outside a machine
+            const { end } = crossSpan(a, b, KX, (t) => this.blocked.has(t));
+            bad = end < 0 || !this.occL.get(end);
+          }
+        }
         if (!bad && kind === EDGE_LCROSS) {
           // straight across the piece, or around one of its corners
           const corner = Math.abs(ax - bx) === 2 && Math.abs(ay - by) === 2;
