@@ -12,8 +12,9 @@ import { accessCells, largeAnchor, occupied } from './engine/geometry';
 import { EDGE_LCROSS, EDGE_LNODE, lnodeEnd, Router, type RouterNet } from './engine/router';
 import { pieceTileKeys } from './engine/power';
 import { lcrossMid } from './engine/intersection';
-import { key, kx, ky } from './engine/solution';
+import { key, KX, kx, ky } from './engine/solution';
 import { now } from './engine/clock';
+import type { Net } from './engine/problem';
 
 const MARGIN = 24;
 
@@ -130,6 +131,34 @@ export function buildEditorGrid(
   return { router, ox: x0, oy: y0, gw, gh, toGrid, fromGrid, inside };
 }
 
+/**
+ * Writes the pipes of `nets` into the document. There is one document pipe per net key, and
+ * the branches of a valve manifold share their key: each pipe written is the union of every
+ * net with that key (writing one branch alone would drop the others).
+ */
+function setPipesByKey(
+  doc: GameLayoutDoc,
+  nets: Net[],
+  which: Iterable<number>,
+  graph: (ni: number) => PipeGraph,
+): GameLayoutDoc {
+  let d = doc;
+  for (const k of new Set([...which].map((ni) => nets[ni].key))) {
+    const nodes = new Set<number>();
+    const edges: number[] = [];
+    let first = -1;
+    nets.forEach((n, ni) => {
+      if (n.key !== k) return;
+      if (first < 0) first = ni;
+      const g = graph(ni);
+      for (const c of g.nodes) nodes.add(c);
+      edges.push(...g.edges);
+    });
+    d = setPipe(d, k, nets[first].large, nets[first].productName, { nodes, edges });
+  }
+  return d;
+}
+
 function graphOf(grid: EditorGrid, ni: number): PipeGraph {
   const r = grid.router;
   const nodes = new Set<number>();
@@ -206,11 +235,8 @@ export function routeNetworks(
   const ok = grid.router.runSubset(todo, timeLimit, () => now() / 1000);
   let doc = view.doc;
   const failed: string[] = [];
-  for (const ni of todo) {
-    const net = P.nets[ni];
-    if (grid.router.failed.has(ni)) failed.push(net.label);
-    doc = setPipe(doc, net.key, net.large, net.productName, graphOf(grid, ni));
-  }
+  for (const ni of todo) if (grid.router.failed.has(ni)) failed.push(P.nets[ni].label);
+  doc = setPipesByKey(doc, P.nets, todo, (ni) => graphOf(grid, ni));
   doc = addMissingPieces(doc, grid, new Set(todo));
   return { doc, routed: todo.length - failed.length, failed, conflictFree: ok };
 }
@@ -235,21 +261,51 @@ export function tidyNetworks(
   if (!todo.length) return { doc: view.doc, changed: 0 };
   const grid = buildEditorGrid(view, [], quantum);
   const clock = () => now() / 1000;
-  const before = todo.map((ni) => JSON.stringify([...grid.router.edges[ni]]));
-  const changed = grid.router.tidy(clock() + timeLimit, clock, todo);
-  if (!changed) return { doc: view.doc, changed: 0 };
+  const orig = new Map(
+    todo.map((ni) => [ni, [new Set(grid.router.tree[ni]), [...grid.router.edges[ni]]] as const]),
+  );
+  grid.router.tidy(clock() + timeLimit, clock, todo);
+  const moved = new Set<number>();
+  for (const [ni, [, edges]] of orig) {
+    if (JSON.stringify(grid.router.edges[ni]) !== JSON.stringify(edges)) moved.add(ni);
+  }
+  // pipes whose re-laid valves do not fit go back to where they were, and it is tried again
+  for (let round = 0; round < 4 && moved.size; round++) {
+    const doc = assembleTidy(view, grid, moved);
+    const v = evaluateDoc(view.ctx, doc, { analyse: false });
+    const bad = v.problems.filter(
+      (p) =>
+        p.severity === 'error' &&
+        !view.problems.some((q) => q.code === p.code && q.message === p.message),
+    );
+    if (!bad.length) return { doc, changed: moved.size };
+    const tiles = new Set(bad.flatMap((p) => p.tiles.map(([x, y]) => key(x, y))));
+    const back = [...moved].filter((ni) =>
+      [...v.sol.cells[ni]].some(
+        (c) => tiles.has(c) || [1, -1, KX, -KX].some((d) => tiles.has(c + d)),
+      ),
+    );
+    // nothing to pin it on: give up on the whole tidy
+    if (!back.length) break;
+    for (const ni of back) {
+      const [tree, edges] = orig.get(ni)!;
+      grid.router.ripup(ni);
+      grid.router.commit(ni, tree, [...edges]);
+      moved.delete(ni);
+    }
+  }
+  return { doc: view.doc, changed: 0 };
+}
+
+/** The document with the tidied pipes of `moved`, their pieces and their valves laid again. */
+function assembleTidy(view: DocView, grid: EditorGrid, moved: Set<number>): GameLayoutDoc {
+  const P = view.ctx.problem;
   let doc: GameLayoutDoc = {
     ...view.doc,
     passthroughs: view.doc.passthroughs.filter((p) => p.pinned),
     intersections: view.doc.intersections.filter((p) => p.pinned),
   };
-  const moved = new Set<number>();
-  todo.forEach((ni, k) => {
-    if (JSON.stringify([...grid.router.edges[ni]]) === before[k]) return;
-    moved.add(ni);
-    const net = P.nets[ni];
-    doc = setPipe(doc, net.key, net.large, net.productName, graphOf(grid, ni));
-  });
+  doc = setPipesByKey(doc, P.nets, moved, (ni) => graphOf(grid, ni));
   doc = addMissingPieces(doc, grid, new Set(P.nets.map((_n, i) => i)));
   // valves on pipes that moved: taken off and laid again on the new route (as the generator does)
   const old = new Map<number, number>();
@@ -262,21 +318,16 @@ export function tidyNetworks(
     valved.add(ni);
     return false;
   });
-  if (valved.size) {
-    doc = { ...doc, valves: kept };
-    const sol = evaluateDoc(view.ctx, doc, { analyse: false }).sol;
-    const an = analyse(P, sol, true);
-    // valve placement may straighten a pipe locally for its valve: keep those routes
-    for (const ni of valved) {
-      const net = P.nets[ni];
-      doc = setPipe(doc, net.key, net.large, net.productName, {
-        nodes: new Set(sol.netNodes[ni]),
-        edges: [...sol.netEdges[ni]],
-      });
-    }
-    doc = withJunctionValves(doc, an, valved);
-  }
-  return { doc, changed };
+  if (!valved.size) return doc;
+  doc = { ...doc, valves: kept };
+  const sol = evaluateDoc(view.ctx, doc, { analyse: false }).sol;
+  const an = analyse(P, sol, true);
+  // valve placement may straighten a pipe locally for its valve: keep those routes
+  doc = setPipesByKey(doc, P.nets, valved, (ni) => ({
+    nodes: new Set(sol.netNodes[ni]),
+    edges: [...sol.netEdges[ni]],
+  }));
+  return withJunctionValves(doc, an, valved);
 }
 
 /** Networks with placed machines on both ends that have no complete route. */

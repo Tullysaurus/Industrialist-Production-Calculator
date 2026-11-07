@@ -98,7 +98,8 @@ function finalTidy(
   const res = tidyNetworks(v0, undefined, quantum, 4);
   if (!res.changed) return doc;
   const v1 = evaluateDoc(ctx, res.doc, { analyse: false });
-  const errs = (v: DocView) => v.problems.filter((p) => p.severity === 'error').length;
+  const errs = (v: DocView) =>
+    v.problems.filter((p) => p.severity === 'error' || p.code === 'unrouted').length;
   const perimeter = (v: DocView) => v.sol.bbox[2] - v.sol.bbox[0] + v.sol.bbox[3] - v.sol.bbox[1];
   const tiles = (v: DocView) => v.sol.cells.reduce((n, c) => n + c.size, 0);
   if (errs(v1) > errs(v0) || perimeter(v1) > perimeter(v0)) {
@@ -329,7 +330,10 @@ export function runLayout(
     `Footprint ${sol.width} x ${sol.height} = ${sol.area.toLocaleString('en-US')} tiles, ${sol.hull.empty.toLocaleString('en-US')} empty tiles inside the outline (${sol.ok ? 'fully routed' : 'NOT fully routed'})`,
   );
   let doc = toDoc(problem, sol, options.pinned, options.valves ? analysis : null);
-  if (options.tuning?.tidy ?? true) doc = finalTidy(problem, doc, !!options.quantumNodes, log);
+  if (options.tuning?.tidy ?? true) {
+    // in the editor's terms (one network per key, as the document stores pipes)
+    doc = finalTidy(buildProblem(input, options.config), doc, !!options.quantumNodes, log);
+  }
   const result = { doc, summary: summary(sol, doc, elapsed(), [...lines]) };
   cb.result?.(result, true);
   cb.progress?.('done', 'Done', sol);
