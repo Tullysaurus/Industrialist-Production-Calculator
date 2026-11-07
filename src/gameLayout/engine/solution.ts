@@ -2,7 +2,15 @@
 import { accessCells, largeAnchor, occupied, type Shape } from './geometry';
 import { assignPassthroughs, type Crossing, type Passthrough } from './passthrough';
 import type { Problem } from './problem';
-import { crossSpan, EDGE_CROSS, EDGE_HOP, EDGE_LCROSS, EDGE_STEP } from './router';
+import {
+  crossSpan,
+  EDGE_CROSS,
+  EDGE_HOP,
+  EDGE_LCROSS,
+  EDGE_LNODE,
+  EDGE_STEP,
+  lnodeEnd,
+} from './router';
 import { spacingViolations, type SpacedRect } from './spacing';
 import { now } from './clock';
 import { aspectPenalty, hullStats, type HullStats } from './hull';
@@ -63,6 +71,8 @@ export class Solution {
   occX = new Map<number, number>();
   /** Large intersection tiles. */
   occI = new Map<number, number>();
+  /** Node piece tiles (EDGE_LNODE ends): how many large pipes end there as node pieces. */
+  occN = new Map<number, number>();
   largeOwner = new Map<number, number>();
   passthroughs: Passthrough[] = [];
   passthroughBad: [number, number][] = [];
@@ -128,6 +138,7 @@ export class Solution {
     this.occL = new Map();
     this.occX = new Map();
     this.occI = new Map();
+    this.occN = new Map();
     this.largeOwner = new Map();
     this.netNodes.forEach((nodes, ni) => {
       const large = this.problem.nets[ni].large;
@@ -144,6 +155,15 @@ export class Solution {
           for (const c of fp(lcrossMid(e[i], e[i + 1], KX))) {
             cells.add(c);
             inc(this.occI, c);
+          }
+        }
+        for (let i = 0; i < e.length; i += 3) {
+          if (e[i + 2] !== EDGE_LNODE) continue;
+          const f = lnodeEnd(e[i], e[i + 1], KX, (t) => this.blocked.has(t));
+          if (f < 0) continue;
+          for (const c of fp(f)) {
+            inc(this.occI, c);
+            inc(this.occN, c);
           }
         }
       }
@@ -315,6 +335,9 @@ export class Solution {
       const i = this.occI.get(c) ?? 0;
       if (s > 2 || l > 2 || (s && l) || x > 1 || (x && s) || (x && l !== 1)) out.add(c);
       if ((l === 2 && i < 1) || i > 2) out.add(c);
+      // a node piece is shared only by pipes that end in it as node pieces
+      const nn = this.occN.get(c) ?? 0;
+      if (nn && l > nn) out.add(c);
     }
     if (this.autoPieces) for (const c of this.badIntersections()) out.add(c);
     for (const [x, y] of this.passthroughBad) out.add(key(x, y));
@@ -327,13 +350,22 @@ export class Solution {
     this.netEdges.forEach((e, ni) => {
       if (!this.problem.nets[ni].large) return;
       for (let i = 0; i < e.length; i += 3) {
-        if (e[i + 2] !== EDGE_LCROSS) continue;
-        const f = lcrossMid(e[i], e[i + 1], KX);
+        const k = e[i + 2];
+        if (k !== EDGE_LCROSS && k !== EDGE_LNODE) continue;
+        const f =
+          k === EDGE_LCROSS
+            ? lcrossMid(e[i], e[i + 1], KX)
+            : lnodeEnd(e[i], e[i + 1], KX, (t) => this.blocked.has(t));
+        if (f < 0) continue;
         let l = out.get(f);
         if (!l) out.set(f, (l = []));
         if (!l.includes(ni)) l.push(ni);
       }
     });
+    // a node piece is a piece only where two pipes share the node's spot
+    for (const f of out.keys()) {
+      if ((this.occN.get(f) ?? 0) > 0 && (this.occL.get(f) ?? 0) < 2) out.delete(f);
+    }
     return out;
   }
 
@@ -461,6 +493,10 @@ export class Solution {
             bad = end < 0 || !this.occL.get(end);
           }
         }
+        if (!bad && kind === EDGE_LNODE) {
+          // 2 straight into the spot right outside a machine node (quantum piping)
+          bad = !net.large || dist !== 2 || lnodeEnd(a, b, KX, (t) => this.blocked.has(t)) < 0;
+        }
         if (!bad && kind === EDGE_LCROSS) {
           // straight across the piece, or around one of its corners
           const corner = Math.abs(ax - bx) === 2 && Math.abs(ay - by) === 2;
@@ -579,7 +615,7 @@ export class Solution {
         const cb = coord(b);
         if (ca === k || cb === k) continue;
         if ((ca < k && cb > k) || (cb < k && ca > k)) {
-          if (edges[i + 2] === EDGE_CROSS || edges[i + 2] === EDGE_LCROSS) return null;
+          if (edges[i + 2] === EDGE_CROSS || edges[i + 2] >= EDGE_LCROSS) return null;
           spanning = true;
         }
         es.push(shift(a), shift(b), edges[i + 2]);
@@ -611,14 +647,14 @@ export class Solution {
         if (lo.length && hi.length) {
           const [a, ka] = lo[0];
           const [b, kb] = hi[0];
-          if (ka === EDGE_CROSS || kb === EDGE_CROSS || ka === EDGE_LCROSS || kb === EDGE_LCROSS) {
+          if (ka === EDGE_CROSS || kb === EDGE_CROSS || ka >= EDGE_LCROSS || kb >= EDGE_LCROSS) {
             return null;
           }
           const sa = shift(a);
           const sb = shift(b);
           const d = Math.abs(kx(sa) - kx(sb)) + Math.abs(ky(sa) - ky(sb));
           es.push(sa, sb, d === 1 ? EDGE_STEP : EDGE_HOP);
-        } else if ((lo[0] ?? hi[0])[1] === EDGE_CROSS || (lo[0] ?? hi[0])[1] === EDGE_LCROSS) {
+        } else if ((lo[0] ?? hi[0])[1] === EDGE_CROSS || (lo[0] ?? hi[0])[1] >= EDGE_LCROSS) {
           return null;
         }
       }

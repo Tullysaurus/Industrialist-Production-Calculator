@@ -26,7 +26,7 @@ export interface DocPipe {
   large: boolean;
   /** Flat [x, y, ...]: tiles (normal pipe) or 2x2 anchors (large pipe). */
   nodes: number[];
-  /** Flat [ax, ay, bx, by, kind, ...]; kind: 0 step, 1 quantum hop, 2 passthrough, 3 intersection. */
+  /** Flat [ax, ay, bx, by, kind, ...]; kind: 0 step, 1 quantum hop, 2 passthrough, 3 intersection, 4 into a node spot (quantum). */
   edges: number[];
   pinned?: boolean;
   /** Product name when it was routed (for orphaned pipes). */
@@ -153,7 +153,7 @@ export function normalizeLayoutDoc(value: unknown): GameLayoutDoc {
     const p = rec(raw, `pipes[${i}]`);
     const edges = ints(p.edges, `pipes[${i}].edges`, 5);
     for (let k = 4; k < edges.length; k += 5) {
-      if (edges[k] < 0 || edges[k] > 3) fail(`pipes[${i}].edges`, 'has an unknown segment kind');
+      if (edges[k] < 0 || edges[k] > 4) fail(`pipes[${i}].edges`, 'has an unknown segment kind');
     }
     return {
       net: str(p.net, `pipes[${i}].net`, 4000),

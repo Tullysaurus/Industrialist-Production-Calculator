@@ -390,7 +390,7 @@ function apply(sol: Solution, g: Grid, s: Int32Array): Solution | null {
         const sv = va >= 0 && va < f.V ? s[va] : Infinity;
         if ((ua < sv && ub > sv) || (ub < sv && ua > sv)) {
           // spans the seam without a node on it: one tile shorter
-          if (kind === EDGE_CROSS || kind === EDGE_LCROSS) return null;
+          if (kind === EDGE_CROSS || kind >= EDGE_LCROSS) return null;
           const d = Math.abs(kx(na) - kx(nb)) + Math.abs(ky(na) - ky(nb));
           es.push(na, nb, d === 1 ? EDGE_STEP : kind);
           continue;

@@ -9,7 +9,7 @@ import type { DocValve, GameLayoutDoc } from '../../gameLayout/docSchema';
 import type { Selection } from '../../gameLayout/docOps';
 import { edgeKey } from '../../gameLayout/engine/flows';
 import type { Shape } from '../../gameLayout/engine/geometry';
-import { EDGE_CROSS, EDGE_HOP, EDGE_LCROSS } from '../../gameLayout/engine/router';
+import { EDGE_CROSS, EDGE_HOP, EDGE_LCROSS, EDGE_LNODE } from '../../gameLayout/engine/router';
 import { lcrossMid } from '../../gameLayout/engine/intersection';
 import { KX, kx, ky } from '../../gameLayout/engine/solution';
 import {
@@ -193,7 +193,7 @@ export function drawLayout(
     const e = view.sol.netEdges[ni];
     g.beginPath();
     for (let i = 0; i < e.length; i += 3) {
-      if (e[i + 2] !== 0) continue;
+      if (e[i + 2] !== 0 && e[i + 2] !== EDGE_LNODE) continue;
       g.moveTo(X(kx(e[i]) + dx + off), Y(ky(e[i]) + dy + off));
       g.lineTo(X(kx(e[i + 1]) + dx + off), Y(ky(e[i + 1]) + dy + off));
     }

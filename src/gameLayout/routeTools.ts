@@ -8,7 +8,7 @@ import { passthroughTiles } from './doc';
 import type { DocPassthrough, GameLayoutDoc } from './docSchema';
 import { addIntersection, addPassthrough, pipeGraph, setPipe, type PipeGraph } from './docOps';
 import { accessCells, largeAnchor, occupied } from './engine/geometry';
-import { EDGE_LCROSS, Router, type RouterNet } from './engine/router';
+import { EDGE_LCROSS, EDGE_LNODE, lnodeEnd, Router, type RouterNet } from './engine/router';
 import { lcrossMid } from './engine/intersection';
 import { key, kx, ky } from './engine/solution';
 import { now } from './engine/clock';
@@ -93,6 +93,7 @@ export function buildEditorGrid(
       }),
   }));
   const router = new Router(gw, gh, blocked, rnets, { jump: view.sol.jump });
+  router.quantumNodes = quantum;
   for (const rn of rnets) {
     if (rn.large)
       rn.terms = rn.terms.map((t) => new Set([...t].filter((a) => !router.blockedL[a])));
@@ -153,8 +154,15 @@ function addMissingPieces(doc: GameLayoutDoc, grid: EditorGrid, nets: Set<number
   for (const ni of nets) {
     const e = grid.router.edges[ni];
     for (let i = 0; i < e.length; i += 3) {
-      if (e[i + 2] !== EDGE_LCROSS) continue;
-      const mid = grid.fromGrid(lcrossMid(e[i], e[i + 1], grid.gw));
+      let f = -1;
+      if (e[i + 2] === EDGE_LCROSS) f = lcrossMid(e[i], e[i + 1], grid.gw);
+      else if (e[i + 2] === EDGE_LNODE) {
+        // a node spot two large pipes share (quantum piping) is an intersection piece too
+        f = lnodeEnd(e[i], e[i + 1], grid.gw, (t) => grid.router.blocked[t] === 1);
+        if (f >= 0 && grid.router.occL[f] < 2) f = -1;
+      }
+      if (f < 0) continue;
+      const mid = grid.fromGrid(f);
       if (have.has(mid)) continue;
       have.add(mid);
       d = addIntersection(d, kx(mid), ky(mid));

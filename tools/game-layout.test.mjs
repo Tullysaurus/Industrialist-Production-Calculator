@@ -593,3 +593,33 @@ test('quantum piping: a normal pipe crosses into a large node through a passthro
   assert.equal(errorsOf(view).length, 0, JSON.stringify(errorsOf(view).slice(0, 3)));
   assert.equal(q.passthroughs.length, 1);
 });
+
+test('quantum piping: two large pipes share a node through an intersection piece on it', async () => {
+  const pctx = D.buildContext(buildProblem(await powerPlantInput()));
+  const P = pctx.problem;
+  const instOf = (re) => P.instances.findIndex(([ni, li]) => li === 0 && re.test(P.nodes[ni].name));
+  const cpp = instOf(/coal power/i);
+  const tower = instOf(/cooling/i);
+  let doc = O.placeMachine(null, pctx, cpp, 40, 80, 0);
+  doc = O.placeMachine(doc, pctx, tower, 40, 10, 0);
+  const has = (n, i) => n.terminals.some((t) => t.inst === i);
+  const water = P.nets.filter((n) => n.large && has(n, cpp) && has(n, tower)).map((n) => n.id);
+  assert.equal(water.length, 2, 'water to the tower and back');
+  const route = (quantum) =>
+    R.routeNetworks(D.evaluateDoc(pctx, doc, { analyse: false }), water, 8, quantum).doc;
+  const nodeEdges = (d) =>
+    d.pipes.reduce((n, p) => {
+      for (let i = 0; i < p.edges.length; i += 5) if (p.edges[i + 4] === 4) n++;
+      return n;
+    }, 0);
+  assert.equal(nodeEdges(route(false)), 0);
+  const q = route(true);
+  assert.equal(nodeEdges(q), 2, 'both pipes end in one node spot');
+  const view = D.evaluateDoc(pctx, q);
+  assert.equal(errorsOf(view).length, 0, JSON.stringify(errorsOf(view).slice(0, 3)));
+  // the shared spot is an intersection piece with each pipe on its own side
+  const spot = view.sol.intersections().find((it) => it.nets.length === 2);
+  assert.ok(spot && q.intersections.some((i) => i.x === spot.x && i.y === spot.y));
+  // saved and loaded again, the document is the same
+  assert.deepEqual(normalizeLayoutDoc(JSON.parse(JSON.stringify(q))), q);
+});

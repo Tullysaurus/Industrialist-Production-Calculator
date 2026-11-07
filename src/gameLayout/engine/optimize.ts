@@ -325,6 +325,7 @@ export function realize(
     }
   }
   const router = new Router(gw, gh, blocked, rnets, { jump });
+  router.quantumNodes = quantum;
   for (const [ni, tree, edges] of fixedRoutes) router.commit(ni, tree, edges);
   // drop large anchors whose 2x2 footprint is blocked
   for (const rn of rnets) {

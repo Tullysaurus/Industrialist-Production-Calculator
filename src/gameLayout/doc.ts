@@ -8,7 +8,7 @@ import type { GameLayoutDoc, DocMachine, DocPipe, DocValve, DocPassthrough } fro
 import { Analysis, type Junction, type PlacedValve } from './engine/flows';
 import { accessCells, rot, valveShape, type Cell, type Shape } from './engine/geometry';
 import type { Problem } from './engine/problem';
-import { crossSpan, EDGE_CROSS, EDGE_LCROSS } from './engine/router';
+import { crossSpan, EDGE_CROSS, EDGE_LCROSS, EDGE_LNODE, lnodeEnd } from './engine/router';
 import { key, KX, kx, ky, Solution, type SolMachine } from './engine/solution';
 import { spacingViolations, type SpacedRect } from './engine/spacing';
 
@@ -391,7 +391,10 @@ export function evaluateDoc(
       let ok = straight || corner;
       if (kind === 0) ok &&= d === 1;
       else if (kind === 1) ok &&= !net.large && d >= 2 && d <= Math.max(1, sol.jump);
-      else if (kind === EDGE_CROSS) {
+      else if (kind === EDGE_LNODE) {
+        // 2 straight into the spot right outside a machine node (quantum piping)
+        ok &&= net.large && d === 2 && lnodeEnd(a, b, KX, (t) => sol.blocked.has(t)) >= 0;
+      } else if (kind === EDGE_CROSS) {
         ok &&= !net.large && (d === 3 || d === 2);
         // 2 long: into a machine node through a passthrough flat against it (quantum piping)
         if (ok && d === 2) {

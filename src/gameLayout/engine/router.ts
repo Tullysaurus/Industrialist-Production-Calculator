@@ -18,7 +18,15 @@
  */
 import type { PortKind } from './geometry';
 import { assignPassthroughs, type Crossing, type Passthrough } from './passthrough';
-import { lcrossEdge, lcrossMid, pieceOk, pieceTiles, sideAnchor, sideOwners } from './intersection';
+import {
+  lcrossEdge,
+  lcrossMid,
+  pieceOk,
+  pieceTiles,
+  sideAnchor,
+  sideOwners,
+  sideTiles,
+} from './intersection';
 
 export const EDGE_STEP = 0;
 export const EDGE_HOP = 1;
@@ -28,6 +36,40 @@ export const EDGE_CROSS = 2;
  * its sides (straight: 4 apart; around a corner: 2 apart in x and in y, see lcrossMid).
  */
 export const EDGE_LCROSS = 3;
+/**
+ * Quantum piping: a large pipe ending in (or starting from) the 2x2 right outside a machine
+ * node, entering it 2 tiles straight from outside one of its sides. Two large pipes may share
+ * that spot as an intersection piece on the node, each through its own side: one feeds the
+ * machine, the other takes its output.
+ */
+export const EDGE_LNODE = 4;
+
+/** Side of the 2x2 at f that lies fully against a machine, or -1. */
+export function machineSide(f: number, stride: number, machine: (t: number) => boolean): number {
+  for (let k = 0; k < 4; k++) {
+    const [p, q] = sideTiles(f, k, stride);
+    if (machine(p) && machine(q)) return k;
+  }
+  return -1;
+}
+
+/** The node end of a large edge a - b of kind EDGE_LNODE, or -1 when it is not one. */
+export function lnodeEnd(
+  a: number,
+  b: number,
+  stride: number,
+  machine: (t: number) => boolean,
+): number {
+  for (const [e, o] of [
+    [b, a],
+    [a, b],
+  ]) {
+    const k = machineSide(e, stride, machine);
+    if (k < 0) continue;
+    for (let s = 0; s < 4; s++) if (s !== k && sideAnchor(e, s, stride) === o) return e;
+  }
+  return -1;
+}
 
 /**
  * The two large-pipe tiles a passthrough crossing a -> b goes over (ascending), and its node
@@ -175,7 +217,10 @@ export class Router {
   crossCells: Set<number>[];
   /** Large intersection tiles laid by each large net. */
   occI: Int16Array;
+  /** Tiles of node pieces (EDGE_LNODE ends), per large pipe using them. */
+  occN: Int16Array;
   interCells: Set<number>[];
+  nodeCells: Set<number>[];
   private interBad = new Set<number>();
   failed = new Set<number>();
   passthroughs: Passthrough[] = [];
@@ -251,6 +296,7 @@ export class Router {
     this.edges = nets.map(() => []);
     this.crossCells = nets.map(() => new Set());
     this.occI = new Int16Array(this.N);
+    this.occN = new Int16Array(this.N);
     this.histL = new Float32Array(this.N);
     this.reserve = new Uint8Array(this.N);
     for (const net of nets) {
@@ -258,6 +304,7 @@ export class Router {
       for (const t of net.terms) for (const c of t) this.reserve[c] = 1;
     }
     this.interCells = nets.map(() => new Set());
+    this.nodeCells = nets.map(() => new Set());
     this.shareCost = o.shareCost ?? 0.35;
     this.bendCost = o.bendCost ?? 0.25;
     this.hWeight = o.hWeight ?? 1.25;
@@ -287,6 +334,8 @@ export class Router {
       // two large pipes only meet on an intersection piece (laid by one or both of them)
       (l === 2 && i < 1 ? 1 : 0) +
       Math.max(0, i - 2) +
+      // a node piece is shared only by pipes that end in it as node pieces
+      (this.occN[c] && l > this.occN[c] ? 1 : 0) +
       (this.interBad.has(c) ? 1 : 0) +
       (s && l ? Math.min(s, l) : 0) +
       Math.max(0, x - 1) +
@@ -309,6 +358,8 @@ export class Router {
       this.occXF[c] -= fluidX;
     }
     for (const c of this.interCells[ni]) this.occI[c]--;
+    for (const c of this.nodeCells[ni] ?? []) this.occN[c]--;
+    this.nodeCells[ni] = new Set();
     this.interCells[ni] = new Set();
     this.cells[ni] = new Set();
     this.tree[ni] = new Set();
@@ -337,8 +388,20 @@ export class Router {
           inter.add(c);
         }
       }
+      const node = new Set<number>();
+      for (let i = 0; i < edges.length; i += 3) {
+        if (edges[i + 2] !== EDGE_LNODE) continue;
+        const f = lnodeEnd(edges[i], edges[i + 1], this.gw, (t) => this.isMachine(t));
+        if (f < 0) continue;
+        for (const c of this.footprint(f)) {
+          inter.add(c);
+          node.add(c);
+        }
+      }
       for (const c of cells) this.occL[c]++;
       for (const c of inter) this.occI[c]++;
+      for (const c of node) this.occN[c]++;
+      this.nodeCells[ni] = node;
     } else {
       for (const c of tree) cells.add(c);
       for (let i = 0; i < edges.length; i += 3) {
@@ -362,6 +425,66 @@ export class Router {
     this.crossCells[ni] = cross;
     this.interCells[ni] = inter;
   }
+
+  /**
+   * Quantum piping, large pipes: 2 tiles straight into the 2x2 right outside a machine node
+   * (a target), which one other large pipe may share as a node piece; or, from such a spot
+   * in the pipe's own tree, 2 tiles straight out of it.
+   */
+  private lnodeMoves(
+    c: number,
+    d: number,
+    gc: number,
+    turn: number,
+    ownGen: number,
+    win: [number, number, number, number],
+    relax: (
+      n: number,
+      nx: number,
+      ny: number,
+      ng: number,
+      from: number,
+      d: number,
+      k: number,
+    ) => void,
+  ): void {
+    const gw = this.gw;
+    const OFF = [1, -1, gw, -gw];
+    const DX = [1, -1, 0, 0];
+    const DY = [0, 0, 1, -1];
+    const n2 = c + 2 * OFF[d];
+    const x2 = (c % gw) + 2 * DX[d];
+    const y2 = Math.floor(c / gw) + 2 * DY[d];
+    const [x0, y0, x1, y1] = win;
+    if (x2 < x0 || y2 < y0 || x2 > Math.min(x1, gw - 2) || y2 > Math.min(y1, this.gh - 2)) return;
+    if (this.blockedL[n2]) return;
+    const machine = (t: number) => this.isMachine(t);
+    const inTree = (a: number) => this.footprint(a).every((t) => this.own[t] === ownGen);
+    if (this.tgt[n2] === this.gen) {
+      // in: the far spot is a node target; the piece is free or one other pipe's node piece
+      const k = machineSide(n2, gw, machine);
+      if (k < 0 || k === (d ^ 1)) return;
+      let over = 0;
+      let hist = 0;
+      const group = this.nets[this.curNet]?.group;
+      for (const t of this.footprint(n2)) {
+        if (this.occS[t] || this.occX[t] || this.occL[t] > 1) return;
+        if (this.occL[t] && !this.occN[t]) over++;
+        // pipes of one valve manifold never share a spot (that would join its branches)
+        if (this.occL[t] && group && this.ownersOf(t).some((o) => this.nets[o].group === group)) {
+          return;
+        }
+        hist += this.histL[t];
+      }
+      relax(n2, x2, y2, gc + 2 + (1 + hist) * (1 + this.pres * over) + turn, c, d, EDGE_LNODE);
+    } else if (inTree(c) && machineSide(c, gw, machine) >= 0 && machineSide(c, gw, machine) !== d) {
+      // out: from the node spot in this pipe's tree, 2 tiles straight away from it
+      relax(n2, x2, y2, gc + 2 + this.largeCost(n2, ownGen) + turn, c, d, EDGE_LNODE);
+    }
+  }
+
+  /** Large pipes may share a machine node's spot (EDGE_LNODE); set by the caller. */
+  quantumNodes = false;
 
   private isMachine(t: number): boolean {
     return t >= 0 && t < this.N && this.blocked[t] === 1;
@@ -447,6 +570,7 @@ export class Router {
     for (const t of pieceTiles(f, gw)) {
       if (this.own[t] === ownGen) return -1;
       if (this.occL[t] !== 1 || this.occS[t] || this.occX[t] || this.occI[t] > 1) return -1;
+      if (this.occN[t]) return -1;
       const o = this.ownerOf(t);
       if (o < 0 || (owner >= 0 && o !== owner)) return -1;
       owner = o;
@@ -634,6 +758,7 @@ export class Router {
               relax(m, mx, my, ng, c, ex, EDGE_LCROSS);
             }
           }
+          if (this.quantumNodes) this.lnodeMoves(c, d, gc, turn, ownGen, win, relax);
           continue;
         }
         if (!large && own[c] === ownGen && occL[c] > 0 && occL[n] > 0) {
@@ -726,7 +851,14 @@ export class Router {
       if (own[c] !== ownGen) {
         if (large) {
           const g = this.gw;
-          if (occL[c] || occL[c + 1] || occL[c + g] || occL[c + g + 1]) conflict = true;
+          if (kindA[c] === EDGE_LNODE) {
+            // a node piece another large pipe may share (one other, laid as a node piece too)
+            for (const t of this.footprint(c)) {
+              if (occS[t] || this.occX[t] || occL[t] > 1 || (occL[t] && !this.occN[t])) {
+                conflict = true;
+              }
+            }
+          } else if (occL[c] || occL[c + 1] || occL[c + g] || occL[c + g + 1]) conflict = true;
           if (occS[c] || occS[c + 1] || occS[c + g] || occS[c + g + 1]) conflict = true;
         } else if ((occL[c] && kindA[c] !== EDGE_CROSS) || occS[c] >= 2) {
           // (a crossing into a node ends on the large pipe: that is its slot)
@@ -768,10 +900,13 @@ export class Router {
 
   /** Kind of the net being routed (fluid?), for passthrough slots. */
   private curFluid = false;
+  /** The net being routed. */
+  private curNet = -1;
 
   routeNet(ni: number): boolean {
     const net = this.nets[ni];
     this.curFluid = net.kind === 'Fluid';
+    this.curNet = ni;
     const large = net.large;
     const terms = net.terms.filter((t) => t.size > 0);
     if (terms.length < net.terms.length) return false;
@@ -1116,6 +1251,7 @@ export class Router {
   findPath(ni: number, sources: Iterable<number>, targets: Iterable<number>): number[] | null {
     const large = this.nets[ni].large;
     this.curFluid = this.nets[ni].kind === 'Fluid';
+    this.curNet = ni;
     const ownGen = ++this.gen;
     for (const c of this.tree[ni]) {
       if (large) for (const q of this.footprint(c)) this.own[q] = ownGen;
@@ -1229,6 +1365,14 @@ export class Router {
         if (seen.has(f)) continue;
         seen.add(f);
         if (this.badPiece(f)) for (const t of this.footprint(f)) bad.add(t);
+      }
+      // node pieces two pipes share: each through its own side
+      for (let i = 0; i < e.length; i += 3) {
+        if (e[i + 2] !== EDGE_LNODE) continue;
+        const f = lnodeEnd(e[i], e[i + 1], gw, (t) => this.isMachine(t));
+        if (f < 0 || seen.has(f)) continue;
+        seen.add(f);
+        if (this.occL[f] > 1 && this.badPiece(f)) for (const t of this.footprint(f)) bad.add(t);
       }
     });
     return bad;
