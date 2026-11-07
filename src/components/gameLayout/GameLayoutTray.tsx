@@ -28,7 +28,13 @@ import {
 import { useState } from 'react';
 import type { LayoutViewModel } from './useLayoutView';
 import { evaluateDoc } from '../../gameLayout/doc';
-import { deleteItems, rotateMachines, selectionSize, togglePinned } from '../../gameLayout/docOps';
+import {
+  deleteItems,
+  rotateMachines,
+  selectionSize,
+  togglePinned,
+  withAttachedPipes,
+} from '../../gameLayout/docOps';
 import { emptyLayoutDoc, type GameLayoutDoc } from '../../gameLayout/docSchema';
 import { routeNetworks, unroutedNetworks } from '../../gameLayout/routeTools';
 import { useFlowStore } from '../../stores/useFlowStore';
@@ -359,11 +365,12 @@ export function GameLayoutTray({ model }: { model: LayoutViewModel }) {
       Icon: Trash2,
       onClick: () => {
         if (!doc) return;
-        setDoc(deleteItems(doc, selection));
+        setDoc(deleteItems(doc, withAttachedPipes(selection, ctx)));
         st().clearSelection();
       },
       disabled: running,
-      title: 'Remove the selection; machines go back to the Unplaced list (Del)',
+      title:
+        'Remove the selection and the pipes of selected machines; machines go back to the Unplaced list (Del)',
     },
     {
       id: 'clear',

@@ -292,15 +292,8 @@ export function evaluateDoc(
       tiles: overlapTiles,
     });
   }
-  for (const m of orphanMachines) {
-    problems.push({
-      severity: 'error',
-      code: 'orphan-machine',
-      message: `${m.name || m.key} is no longer in the flowchart - delete it`,
-      tiles: [[m.x, m.y]],
-      machineKey: m.key,
-    });
-  }
+  // machines / pipes of flowchart items that were deleted are kept out of sight (so undoing
+  // the delete brings them back where they were); they are not drawn and not reported
   if (unplaced.length) {
     problems.push({
       severity: 'warning',
@@ -336,15 +329,6 @@ export function evaluateDoc(
   }
 
   // ---- pipes
-  for (const p of orphanPipes) {
-    problems.push({
-      severity: 'error',
-      code: 'orphan-pipe',
-      message: `${p.label || 'A pipe'}: its flowchart connection changed - re-route or delete it`,
-      tiles: p.nodes.length >= 2 ? [[p.nodes[0], p.nodes[1]]] : [],
-      netKey: p.net,
-    });
-  }
   const instM = new Map(machines.map((m) => [m.inst, m]));
   P.nets.forEach((net, ni) => {
     const nodes = netNodes[ni];

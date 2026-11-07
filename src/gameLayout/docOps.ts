@@ -136,6 +136,24 @@ export function deleteItems(doc: GameLayoutDoc, sel: Selection): GameLayoutDoc {
   };
 }
 
+/**
+ * The selection plus the pipes of its machines' connections: deleting a machine takes its
+ * pipes with it instead of leaving them behind, unconnected.
+ */
+export function withAttachedPipes(sel: Selection, ctx: LayoutContext): Selection {
+  if (!sel.machines.size) return sel;
+  const insts = new Set<number>();
+  for (const k of sel.machines) {
+    const g = ctx.instByKey.get(k);
+    if (g !== undefined) insts.add(g);
+  }
+  const pipes = new Set(sel.pipes);
+  for (const net of ctx.problem.nets) {
+    if (net.terminals.some((t) => insts.has(t.inst))) pipes.add(net.key);
+  }
+  return { ...sel, pipes };
+}
+
 /** Pin when anything selected is unpinned, otherwise unpin all of it. */
 export function togglePinned(doc: GameLayoutDoc, sel: Selection): GameLayoutDoc {
   const items = [

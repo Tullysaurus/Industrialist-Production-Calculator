@@ -17,6 +17,7 @@ import {
   selectionSize,
   togglePinned,
   deleteItems,
+  withAttachedPipes,
   type Selection,
 } from '../../gameLayout/docOps';
 import { emptyLayoutDoc, type GameLayoutDoc } from '../../gameLayout/docSchema';
@@ -338,11 +339,6 @@ export function GameLayoutCanvas({ view, doc }: Props) {
   const machineKeyAt = (t: number): string | null => {
     const inst = hit.machineAt.get(t);
     if (inst !== undefined) return shown.machineOf.get(inst)?.key ?? null;
-    for (const m of shown.orphanMachines) {
-      const w = m.rot % 2 ? m.h : m.w;
-      const h = m.rot % 2 ? m.w : m.h;
-      if (kx(t) >= m.x && kx(t) < m.x + w && ky(t) >= m.y && ky(t) < m.y + h) return m.key;
-    }
     return null;
   };
 
@@ -739,14 +735,34 @@ export function GameLayoutCanvas({ view, doc }: Props) {
       const y0 = c.y + Math.min(gs.sy, py) / c.scale;
       const y1 = c.y + Math.max(gs.sy, py) / c.scale;
       const sel = cloneSel(st.selection);
+      // everything entirely inside the box
+      const inBox = (x: number, y: number, w: number, h: number) =>
+        x >= x0 && y >= y0 && x + w <= x1 && y + h <= y1;
       for (const m of view.sol.machines) {
-        if (m.x >= x0 && m.y >= y0 && m.x + m.shape.w <= x1 && m.y + m.shape.h <= y1) {
+        if (inBox(m.x, m.y, m.shape.w, m.shape.h)) {
           const dm = view.machineOf.get(m.inst);
           if (dm) sel.machines.add(dm.key);
         }
       }
-      for (const v of view.doc.valves)
-        if (v.x >= x0 && v.y >= y0 && v.x <= x1 && v.y <= y1) sel.pieces.add(v.id);
+      P.nets.forEach((net, ni) => {
+        const cells = view.sol.cells[ni];
+        if (!cells.size) return;
+        for (const c of cells) if (!inBox(kx(c), ky(c), 1, 1)) return;
+        sel.pipes.add(net.key);
+      });
+      for (const v of view.doc.valves) {
+        const g = valveGeometry(v);
+        if ([g.a, g.m, g.e].every(([x, y]) => inBox(x, y, 1, 1))) sel.pieces.add(v.id);
+      }
+      for (const p of view.doc.passthroughs) {
+        const [w, h] = p.horizontal ? [4, 2] : [2, 4];
+        if (inBox(p.x, p.y, w, h)) sel.pieces.add(p.id);
+      }
+      for (const p of view.doc.intersections) if (inBox(p.x, p.y, 2, 2)) sel.pieces.add(p.id);
+      for (const p of view.doc.power ?? []) {
+        const [w, h] = pieceSize(p.kind, p.rot);
+        if (inBox(p.x, p.y, w, h)) sel.pieces.add(p.id);
+      }
       st.setSelection(sel);
       setOverlay((o) => ({ ...o, marquee: null }));
     } else if (gs.kind === 'paint') {
@@ -805,7 +821,7 @@ export function GameLayoutCanvas({ view, doc }: Props) {
         else if (d && st.selection.machines.size)
           setDoc(rotateMachines(d, view.ctx, st.selection.machines));
       } else if ((k === 'delete' || k === 'backspace') && d && selectionSize(st.selection)) {
-        setDoc(deleteItems(d, st.selection));
+        setDoc(deleteItems(d, withAttachedPipes(st.selection, view.ctx)));
         st.clearSelection();
       } else if (k === 'p' && d && selectionSize(st.selection)) {
         setDoc(togglePinned(d, st.selection));

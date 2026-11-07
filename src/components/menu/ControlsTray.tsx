@@ -247,6 +247,8 @@ export function ControlsTray() {
         });
     } else if (btn.id === 'clear_canvas') {
       setNodesAndEdges([], []);
+      // the in-game layout belongs to the flowchart: clear it too
+      useFlowStore.getState().setGameLayout(null);
     } else if (btn.id === 'undo') {
       undo();
     } else if (btn.id === 'redo') {

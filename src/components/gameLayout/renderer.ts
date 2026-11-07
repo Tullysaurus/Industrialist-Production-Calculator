@@ -390,16 +390,6 @@ export function drawLayout(
       g.fillText(fit(g, label, maxW), X(x + m.shape.w / 2), Y(y + m.shape.h / 2));
     }
   }
-  for (const m of view.orphanMachines) {
-    const w = m.rot % 2 ? m.h : m.w;
-    const h = m.rot % 2 ? m.w : m.h;
-    if (!visible(m.x, m.y, m.x + w, m.y + h)) continue;
-    g.strokeStyle = theme.error;
-    g.setLineDash([6, 4]);
-    g.lineWidth = 2;
-    g.strokeRect(X(m.x), Y(m.y), w * s, h * s);
-    g.setLineDash([]);
-  }
 
   // ---- power: pieces, then cables on top (they run overhead)
   drawPower(g, view, theme, s, X, Y, visible, sel.pieces, dragOf, opt.showPower);

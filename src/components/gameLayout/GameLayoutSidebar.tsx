@@ -308,7 +308,8 @@ export function GameLayoutSidebar({ model }: { model: LayoutViewModel }) {
             className={styles['link-button']}
             onClick={() => doc && setDoc(deleteOrphans(doc, view.orphanMachines, view.orphanPipes))}
           >
-            Delete everything that is no longer in the flowchart
+            Remove {view.orphanMachines.length} machine(s) and {view.orphanPipes.length} pipe(s) of
+            deleted flowchart items (hidden, kept for undo)
           </button>
         )}
         {!view.problems.length && <p className={styles.hint}>No problems.</p>}
