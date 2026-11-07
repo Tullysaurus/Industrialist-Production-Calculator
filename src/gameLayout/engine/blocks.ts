@@ -42,6 +42,13 @@ export interface BlockLike {
   getState(): unknown;
   setState(st: unknown): void;
   widenInner(points: [number, number][], geo: Geometry): void;
+  /**
+   * Grouping penalties of an arrangement (0 for modules and the pinned block): rows of the
+   * same machine beyond one back-to-back pair, and ports that do not face the row corridors
+   * (inputs and outputs on separate sides).
+   */
+  rowsPenalty?(opt: BlockOption): number;
+  facingPenalty?(opt: BlockOption): number;
 }
 
 export const sameOption = (a: BlockOption, b: BlockOption) =>
@@ -98,6 +105,8 @@ export class Block implements BlockLike {
   /** How much pipe demand accumulates along a shared corridor. */
   acc = 0.75;
   demand: Record<Side, [number, number]>;
+  /** Per side (unrotated): pipe connections taking from (in) / giving to (out) a pipe. */
+  dirSides: Record<Side, { in: number; out: number }>;
   private cache = new Map<string, Geometry>();
 
   constructor(idx: number, nodeIdx: number, node: PNode, instIds: number[], nets: Net[]) {
@@ -111,6 +120,22 @@ export class Block implements BlockLike {
     const s0 = Block.initialSlack;
     this.extSide = { left: s0, top: s0, right: s0, bottom: s0 };
     const local = new Set(instIds);
+    this.dirSides = {
+      top: { in: 0, out: 0 },
+      right: { in: 0, out: 0 },
+      bottom: { in: 0, out: 0 },
+      left: { in: 0, out: 0 },
+    };
+    const first = instIds[0];
+    for (const net of nets) {
+      for (const t of net.terminals) {
+        if (t.inst !== first) continue;
+        for (const p of t.ports) {
+          const port = this.shape.ports.get(p);
+          if (port) this.dirSides[port.side][t.direction === 'input' ? 'in' : 'out'] += 1;
+        }
+      }
+    }
     const perInst = new Map<number, Record<Side, [number, number]>>();
     for (const net of nets) {
       for (const t of net.terminals) {
@@ -241,6 +266,33 @@ export class Block implements BlockLike {
       rot: opt.rot,
       termPos: makeTermPos(items),
     };
+  }
+
+  rowsPenalty(opt: BlockOption): number {
+    const cols = Math.min(opt.cols, this.n);
+    const rows = Math.ceil(this.n / cols);
+    // one row, or one back-to-back pair sharing a corridor, is a tidy row
+    const extra = Math.max(0, rows - (opt.alt ? 2 : 1));
+    // paired rows that are not mirrored do not share their corridor
+    const unpaired = rows >= 2 && !opt.alt ? 1 : 0;
+    const area = this.shape.w * this.shape.h;
+    return (extra + unpaired) * cols * area;
+  }
+
+  facingPenalty(opt: BlockOption): number {
+    // sides after rotation: rows run left-right, so their corridors are on top / bottom
+    let across = 0;
+    let mixed = 0;
+    for (const s of SIDES) {
+      const d = this.dirSides[s];
+      const rs = rotateSide(s, opt.rot);
+      if (rs === 'left' || rs === 'right') across += d.in + d.out;
+      if (d.in && d.out) mixed += Math.min(d.in, d.out);
+    }
+    const rows = Math.ceil(this.n / Math.min(opt.cols, this.n));
+    // mirrored row pairs put the same kind of port on the shared corridor
+    const unmirrored = rows >= 2 && !opt.alt ? 1 : 0;
+    return (across + mixed + unmirrored) * this.n * this.shape.w;
   }
 
   clearCache(): void {

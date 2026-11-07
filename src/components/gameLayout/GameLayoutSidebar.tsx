@@ -162,6 +162,46 @@ export function GameLayoutSidebar({ model }: { model: LayoutViewModel }) {
           />
           <span>Place power poles, transformers and the grid connection</span>
         </label>
+        <label className={styles.check}>
+          <input
+            type="checkbox"
+            checked={options.rows}
+            onChange={(e) => st().setOptions({ rows: e.target.checked })}
+            disabled={generator.status === 'running'}
+          />
+          <span>Same machines in rows</span>
+        </label>
+        <label className={styles.check}>
+          <input
+            type="checkbox"
+            checked={options.facing}
+            onChange={(e) => st().setOptions({ facing: e.target.checked })}
+            disabled={generator.status === 'running'}
+          />
+          <span>Ports facing shared corridors (inputs one side, outputs the other)</span>
+        </label>
+        <label className={styles.check}>
+          <input
+            type="checkbox"
+            checked={options.flowOrder}
+            onChange={(e) => st().setOptions({ flowOrder: e.target.checked })}
+            disabled={generator.status === 'running'}
+          />
+          <span>Production in flow order (raw materials to products)</span>
+        </label>
+        <label className={styles.field}>
+          <span>Tidy vs. compact</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={options.tidiness}
+            onChange={(e) => st().setOptions({ tidiness: Number(e.target.value) })}
+            disabled={generator.status === 'running'}
+            title="How much extra space the layout may use to be tidier"
+          />
+        </label>
         <p className={styles.hint}>
           Generate keeps pinned machines and pipes where they are and lays out the rest around them.
         </p>

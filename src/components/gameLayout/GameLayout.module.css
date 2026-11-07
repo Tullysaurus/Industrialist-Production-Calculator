@@ -561,3 +561,10 @@
     max-height: 40vh;
   }
 }
+
+.field input[type='range'] {
+  padding: 0;
+  background: none;
+  border: none;
+  accent-color: var(--theme-color-primary);
+}

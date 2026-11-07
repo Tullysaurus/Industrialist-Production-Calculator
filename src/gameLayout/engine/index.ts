@@ -203,6 +203,7 @@ export function runLayout(
     stallLimit: options.tuning?.stallLimit,
     seams: options.tuning?.seams ?? true,
     power: options.power ?? true,
+    grouping: options.grouping,
     hullCost: options.tuning?.hullCost ?? true,
     notchWeight: options.tuning?.notchWeight ?? 0.1,
     log,

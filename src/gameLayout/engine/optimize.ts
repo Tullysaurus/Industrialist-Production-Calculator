@@ -14,7 +14,7 @@ import {
 } from './blocks';
 import { Macro, MacroLayout, clusterSignature, instanceClusters } from './clusters';
 import { accessCells, largeAnchor, occupied, rot, SIDES, type Shape, type Side } from './geometry';
-import { Placer, type PlacementInfo, type PlacerState } from './placer';
+import { Placer, type GroupingOptions, type PlacementInfo, type PlacerState } from './placer';
 import type { Problem } from './problem';
 import { Router, type RouterNet } from './router';
 import { key, kx, ky, Solution, type SolMachine } from './solution';
@@ -52,6 +52,8 @@ export interface OptimizeOptions {
   notchWeight?: number;
   /** Place power poles, transformers and the grid connection. */
   power?: boolean;
+  /** Tidiness: rows, flow order, ports facing corridors (traded against space). */
+  grouping?: GroupingOptions;
 }
 
 export interface PinnedSpec {
@@ -472,6 +474,7 @@ export function optimize(problem: Problem, o: OptimizeOptions): Solution {
     measure: problem.spacingMeasure,
     hullCost: o.hullCost,
     notchWeight: o.notchWeight,
+    grouping: o.grouping,
   });
   o.log(
     `Placement (${blocks.length} blocks, ${problem.instances.length} machines, ${problem.nets.length} pipe networks)...`,

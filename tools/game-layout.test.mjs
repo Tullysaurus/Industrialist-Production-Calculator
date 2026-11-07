@@ -443,3 +443,27 @@ test('generated layouts power every machine and keep the plan in the saved docum
     [],
   );
 });
+
+test('grouping: same machines prefer one row or a mirrored pair, and options are used', async () => {
+  const { Block } = await viteServer.ssrLoadModule('/src/gameLayout/engine/blocks.ts');
+  const problem = buildProblem(input);
+  const ni = problem.nodes.findIndex((n) => n.count >= 6 && !n.synthetic);
+  const node = problem.nodes[ni];
+  const ids = Array.from({ length: node.count }, (_v, i) => problem.instBase[ni] + i);
+  const b = new Block(0, ni, node, ids, problem.nets);
+  const n = node.count;
+  assert.equal(b.rowsPenalty({ rot: 0, cols: n, alt: false }), 0, 'one row');
+  assert.equal(b.rowsPenalty({ rot: 0, cols: Math.ceil(n / 2), alt: true }), 0, 'a mirrored pair');
+  assert.ok(b.rowsPenalty({ rot: 0, cols: Math.ceil(n / 2), alt: false }) > 0, 'unmirrored pair');
+  assert.ok(b.rowsPenalty({ rot: 0, cols: Math.ceil(n / 3), alt: true }) > 0, 'three rows');
+  const res = runLayout(input, {
+    timeBudget: 12,
+    valves: false,
+    seed: 5,
+    quantumJump: 3,
+    power: false,
+    grouping: { rows: true, flowOrder: true, facing: true, strength: 1 },
+  });
+  assert.equal(res.summary.fullyRouted, true);
+  assert.equal(errorsOf(D.evaluateDoc(ctx, res.doc)).length, 0);
+});

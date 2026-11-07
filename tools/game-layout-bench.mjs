@@ -3,6 +3,7 @@
 // Usage: node tools/game-layout-bench.mjs <input.json> [seconds] [out.json]
 //          [--no-valves] [--seed=N] [--verbose] [--pin=N]   (pin N machines and run again)
 //          [--no-seams] [--no-hull]   (old row/column compaction, bounding-box objective)
+//          [--no-power] [--rows] [--facing] [--flow] [--tidy=0.5]   (power, grouping)
 import fs from 'node:fs';
 import { createServer } from 'vite';
 
@@ -67,6 +68,12 @@ try {
         seed: flag('seed', 0),
         quantumJump: 3,
         power: !flags.includes('--no-power'),
+        grouping: {
+          rows: flags.includes('--rows'),
+          flowOrder: flags.includes('--flow'),
+          facing: flags.includes('--facing'),
+          strength: flag('tidy', 0.5),
+        },
         pinned,
         tuning: {
           slack: flag('slack', undefined),

@@ -38,12 +38,28 @@ export interface GeneratorOptions {
   valves: boolean;
   /** Place power poles, transformers and the grid connection. */
   power: boolean;
+  /** Same machines in rows (one row or a mirrored back-to-back pair per recipe). */
+  rows: boolean;
+  /** Production stages in order along one axis. */
+  flowOrder: boolean;
+  /** Ports facing the row corridors (inputs one side, outputs the other). */
+  facing: boolean;
+  /** 0..1: how much space tidiness may cost. */
+  tidiness: number;
 }
 
 const OPTIONS_KEY = 'industrialist.gameLayout.options';
 
 function readOptions(): GeneratorOptions {
-  const fallback: GeneratorOptions = { timeBudget: 60, valves: true, power: true };
+  const fallback: GeneratorOptions = {
+    timeBudget: 60,
+    valves: true,
+    power: true,
+    rows: true,
+    flowOrder: false,
+    facing: true,
+    tidiness: 0.5,
+  };
   try {
     const raw = localStorage.getItem(OPTIONS_KEY);
     if (!raw) return fallback;
@@ -55,6 +71,13 @@ function readOptions(): GeneratorOptions {
           : fallback.timeBudget,
       valves: typeof v.valves === 'boolean' ? v.valves : fallback.valves,
       power: typeof v.power === 'boolean' ? v.power : fallback.power,
+      rows: typeof v.rows === 'boolean' ? v.rows : fallback.rows,
+      flowOrder: typeof v.flowOrder === 'boolean' ? v.flowOrder : fallback.flowOrder,
+      facing: typeof v.facing === 'boolean' ? v.facing : fallback.facing,
+      tidiness:
+        typeof v.tidiness === 'number' && v.tidiness >= 0 && v.tidiness <= 1
+          ? v.tidiness
+          : fallback.tidiness,
     };
   } catch {
     return fallback;
@@ -171,6 +194,12 @@ export const useGameLayoutStore = create<GameLayoutEditorState>((set, get) => ({
       timeBudget: get().options.timeBudget,
       valves: get().options.valves,
       power: get().options.power,
+      grouping: {
+        rows: get().options.rows,
+        flowOrder: get().options.flowOrder,
+        facing: get().options.facing,
+        strength: get().options.tidiness,
+      },
       seed: Math.floor(Math.random() * 1e9),
       quantumJump: 3,
       pinned: pinned ?? undefined,

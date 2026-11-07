@@ -68,7 +68,21 @@ export interface PlacementInfo extends PackResult {
 
 interface PlacerNet {
   terms: [number, number, string[]][];
+  /** Per term: the machine gives to the pipe (a source). */
+  out: boolean[];
   weight: number;
+}
+
+/** How tidy the layout should be, traded against space. */
+export interface GroupingOptions {
+  /** Machines of one recipe in rows (one row or one mirrored back-to-back pair). */
+  rows: boolean;
+  /** Production stages in order along one axis (the one that fits better). */
+  flowOrder: boolean;
+  /** Ports facing the row corridors: inputs on one side, outputs on the other. */
+  facing: boolean;
+  /** 0..1: how much space tidiness may cost. */
+  strength: number;
 }
 
 export interface SpacedInst {
@@ -91,10 +105,14 @@ export class Placer {
   /** Cost the orthogonal hull of the blocks (soft aspect penalty) instead of the bounding box. */
   hullCost: boolean;
   notchWeight: number;
+  grouping: GroupingOptions | null;
 
   constructor(
     blocks: BlockLike[],
-    nets: { large: boolean; terminals: { inst: number; ports: string[] }[] }[],
+    nets: {
+      large: boolean;
+      terminals: { inst: number; ports: string[]; direction?: 'input' | 'output' }[];
+    }[],
     instBlock: Map<number, [number, number]>,
     opts: {
       wireWeight?: number;
@@ -104,10 +122,12 @@ export class Placer {
       spacingWeight?: number;
       hullCost?: boolean;
       notchWeight?: number;
+      grouping?: GroupingOptions;
     } = {},
   ) {
     this.blocks = blocks;
     this.hullCost = opts.hullCost ?? false;
+    this.grouping = opts.grouping ?? null;
     this.notchWeight = opts.notchWeight ?? 0;
     this.measure = opts.measure ?? 'edge';
     this.spacingWeight = opts.spacingWeight ?? 4000;
@@ -125,11 +145,15 @@ export class Placer {
     this.nets = [];
     for (const net of nets) {
       const terms: [number, number, string[]][] = [];
+      const out: boolean[] = [];
       for (const t of net.terminals) {
         const ib = instBlock.get(t.inst);
-        if (ib) terms.push([ib[0], ib[1], t.ports]);
+        if (ib) {
+          terms.push([ib[0], ib[1], t.ports]);
+          out.push(t.direction === 'output');
+        }
       }
-      if (terms.length >= 2) this.nets.push({ terms, weight: net.large ? 2 : 1 });
+      if (terms.length >= 2) this.nets.push({ terms, out, weight: net.large ? 2 : 1 });
     }
   }
 
@@ -156,12 +180,22 @@ export class Placer {
     );
     const { xs, ys } = p;
     let wl = 0;
+    const flow = !!this.grouping?.flowOrder;
+    // flow order: how far sources sit after their consumers, along x and along y
+    let backX = 0;
+    let backY = 0;
     for (const net of this.nets) {
       let minx = Infinity;
       let miny = Infinity;
       let maxx = -Infinity;
       let maxy = -Infinity;
-      for (const [b, li, ports] of net.terms) {
+      let sx = 0;
+      let sy = 0;
+      let sn = 0;
+      let cx = 0;
+      let cy = 0;
+      let cn = 0;
+      net.terms.forEach(([b, li, ports], k) => {
         const tp = geos[b].termPos(li, ports);
         const px = tp[0] + xs[b];
         const py = tp[1] + ys[b];
@@ -169,8 +203,22 @@ export class Placer {
         if (px > maxx) maxx = px;
         if (py < miny) miny = py;
         if (py > maxy) maxy = py;
-      }
+        if (!flow) return;
+        if (net.out[k]) {
+          sx += px;
+          sy += py;
+          sn++;
+        } else {
+          cx += px;
+          cy += py;
+          cn++;
+        }
+      });
       wl += net.weight * (maxx - minx + (maxy - miny));
+      if (flow && sn && cn) {
+        backX += net.weight * Math.max(0, sx / sn - cx / cn);
+        backY += net.weight * Math.max(0, sy / sn - cy / cn);
+      }
     }
     let viol = 0;
     if (this.spaced.length) {
@@ -190,7 +238,18 @@ export class Placer {
       const hull = rectHullArea(geos.map((gg, b) => [xs[b], ys[b], gg.w, gg.h]));
       area = hull + aspectPenalty(p.W, p.H, hull) + this.notchWeight * (p.W * p.H - hull);
     }
-    const cost = area + this.wireWeight * wl + this.spacingWeight * viol;
+    let tidy = 0;
+    const gr = this.grouping;
+    if (gr && gr.strength > 0) {
+      const s = gr.strength;
+      this.blocks.forEach((blk, i) => {
+        if (gr.rows && blk.rowsPenalty) tidy += 2 * s * blk.rowsPenalty(st.opt[i]);
+        if (gr.facing && blk.facingPenalty) tidy += s * blk.facingPenalty(st.opt[i]);
+      });
+      // left to right or top to bottom, whichever the layout fits better
+      if (gr.flowOrder) tidy += 4 * s * Math.min(backX, backY);
+    }
+    const cost = area + this.wireWeight * wl + this.spacingWeight * viol + tidy;
     this.lastViolation = viol;
     return [cost, { ...p, geos, wl, viol }];
   }

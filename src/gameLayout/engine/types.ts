@@ -78,6 +78,11 @@ export interface LayoutOptions {
   seed: number;
   /** Place power poles, transformers and the grid connection (default on). */
   power?: boolean;
+  /**
+   * Tidiness, traded against space (strength 0..1): same machines in rows, production in flow
+   * order, ports facing the row corridors.
+   */
+  grouping?: { rows: boolean; flowOrder: boolean; facing: boolean; strength: number };
   /** Max tiles a pipe may hop over other pipes (quantum piping), 0 = off. */
   quantumJump: number;
   config?: Partial<LayoutConfig>;

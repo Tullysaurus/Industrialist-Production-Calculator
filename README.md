@@ -64,6 +64,10 @@ the flowchart changes (new machines appear as unplaced, removed ones are flagged
   so an L- or T-shaped layout is only lightly penalised for its notches (long tails and very
   elongated layouts cost a little extra, which keeps the shape compact). Pinned machines and pipes form a fixed block the rest is laid out around. It
   runs in a Web Worker, shows its best layout while it works and can be stopped at any time.
+- **Tidiness options** (generator panel): same machines in rows (one row, or a mirrored
+  back-to-back pair sharing a corridor), ports facing the shared corridors (inputs on one side,
+  outputs on the other) and production in flow order (raw materials to products, along
+  whichever axis fits better), with a tidy-vs-compact slider for how much space they may cost.
 - **Power**: the generator places HV poles (12x12, 8 nodes of 120 MMF/s, reach 70 tiles),
   MV poles (2x1, 4 nodes of 1.5 MMF/s, reach 22 tiles), HV transformers (8x8, 15 % loss
   without coolant) and one external HV grid connection on the edge of the layout, so every
